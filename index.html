@@ -16,7 +16,7 @@
 
         .container {
             display: flex; flex-direction: column; align-items: center;
-            max-width: 900px; width: 100%; padding: 20px;
+            width: 100%; max-width: 1000px; padding: 20px;
         }
 
         h1 {
@@ -24,34 +24,36 @@
             margin-bottom: 20px; color: #ff8c00; text-shadow: 0 0 10px rgba(255,140,0,0.5);
         }
 
-        /* 隱藏真實 Video 與暫存 Canvas */
         #webcam, #hiddenCanvas { display: none; }
 
-        /* 渲染畫面容器 */
+        /* RWD 預覽視窗容器：寬度自動隨網頁縮放 */
         .preview-box {
             position: relative;
+            width: 100%; max-width: 800px;
+            aspect-ratio: 4 / 3; /* 固定 4:3 比例，跟相機一致 */
             border: 2px solid #333; border-radius: 8px;
             overflow: hidden; background: #000;
             box-shadow: 0 10px 30px rgba(0,0,0,0.8);
             display: flex; justify-content: center; align-items: center;
         }
 
-        /* ASCII 模式畫布 */
+        /* ASCII 模式畫布：自動填滿容器 */
         #asciiOutput {
             font-family: "Courier New", Courier, monospace;
-            white-space: pre; line-height: 0.65; font-size: 8px;
-            letter-spacing: 1px; color: #00ff66; background: #000;
-            padding: 15px; font-weight: bold; user-select: none;
-            display: block; margin: 0;
+            white-space: pre; line-height: 0.55; font-size: 5px; /* 降低字級以大幅增加解析度與細節 */
+            letter-spacing: 0.5px; color: #00ff66; background: #000;
+            margin: 0; padding: 0; font-weight: bold; user-select: none;
+            display: block; width: 100%; height: 100%;
+            overflow: hidden; text-align: center;
         }
 
-        /* GameBoy 模式畫布 */
+        /* GameBoy 模式畫布：填滿容器並保持高畫質像素 */
         #pixelCanvas {
-            image-rendering: pixelated; /* 保持像素風格不模糊 */
+            width: 100%; height: 100%; object-fit: contain;
+            image-rendering: pixelated;
             display: none;
         }
 
-        /* 控制面板 */
         .controls {
             margin-top: 25px; display: flex; gap: 15px;
             flex-wrap: wrap; justify-content: center; align-items: center;
@@ -65,10 +67,7 @@
         .btn:hover { background: #333; color: #fff; border-color: #666; }
         .btn.active { background: #ff8c00; color: #000; border-color: #ff8c00; font-weight: bold; }
 
-        /* 拍攝閃光效果 */
-        .flash {
-            animation: flashAnim 0.2s ease-out;
-        }
+        .flash { animation: flashAnim 0.2s ease-out; }
         @keyframes flashAnim {
             0% { opacity: 0.3; background: white; }
             100% { opacity: 1; }
@@ -84,14 +83,12 @@
         <canvas id="hiddenCanvas"></canvas>
 
         <div class="preview-box" id="previewBox">
-            <!-- ASCII 模式輸出區 -->
             <pre id="asciiOutput"></pre>
-            <!-- GameBoy 模式畫布 -->
             <canvas id="pixelCanvas"></canvas>
         </div>
 
         <div class="controls">
-            <button class="btn active" id="btnAscii" onclick="setMode('ascii')">ASCII 文字風</button>
+            <button class="btn active" id="btnAscii" onclick="setMode('ascii')">ASCII 高細節風</button>
             <button class="btn" id="btnGameboy" onclick="setMode('gameboy')">GameBoy 綠像素</button>
             <button class="btn" onclick="takeSnapshot()">📷 拍照下載</button>
         </div>
@@ -106,41 +103,35 @@
         const pixelCanvas = document.getElementById('pixelCanvas');
         const pixelCtx = pixelCanvas.getContext('2d');
 
-        let currentMode = 'ascii'; // 'ascii' 或 'gameboy'
+        let currentMode = 'ascii';
         
-        // ASCII 密度字元對照表（從暗到亮）
-        const asciiChars = ' .:-=+*#%@';
+        // 擴充 ASCII 字元階梯，讓暗部到亮部的過渡更細膩
+        const asciiChars = ' .`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
         
-        // GameBoy 經典四色盤 (綠色系由暗到亮)
         const gbPalette = [
-            [15, 56, 15],     // 濃綠/最暗
-            [48, 98, 48],     // 深綠
-            [139, 172, 15],   // 淺綠
-            [155, 188, 15]    // 明綠/最亮
+            [15, 56, 15],     
+            [48, 98, 48],     
+            [139, 172, 15],   
+            [155, 188, 15]    
         ];
 
-        // 1. 修復 Safari 的 Camera 啟動邏輯
         async function initCamera() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+                    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
                     audio: false
                 });
                 video.srcObject = stream;
-        
-                // 解決 Safari 不觸發 loadedmetadata 的問題
                 await video.play();
-        
-                // 強制進入預設 Mode 並啟動渲染迴圈
+                
                 setMode('ascii');
                 requestAnimationFrame(processFrame);
             } catch (err) {
                 console.error(err);
-                alert("無法存取攝影機，請檢查瀏覽器相機權限設定。");
+                alert("無法存取攝影機，請授權攝影機權限。");
             }
         }
 
-        // 2. 修復 UI 與 Canvas 顯示切換
         function setMode(mode) {
             currentMode = mode;
             document.getElementById('btnAscii').classList.toggle('active', mode === 'ascii');
@@ -155,24 +146,21 @@
             }
         }
 
-        // 3. 每訊框影像處理核心邏輯
         function processFrame() {
             if (video.paused || video.ended) return;
 
-            // 設定採樣低解析度 (讓像素化更加明顯)
-            const cols = 100;
-            const rows = Math.floor(cols * (video.videoHeight / video.videoWidth) * 0.55);
+            // 提升採樣點至 200 行，大幅增加五官與線條細節
+            const cols = 200; 
+            const rows = Math.floor(cols * (video.videoHeight / video.videoWidth) * 0.5);
 
             hiddenCanvas.width = cols;
             hiddenCanvas.height = rows;
 
-            // 鏡頭水平翻轉 (Selfie 視角)
             hiddenCtx.save();
             hiddenCtx.scale(-1, 1);
             hiddenCtx.drawImage(video, -cols, 0, cols, rows);
             hiddenCtx.restore();
 
-            // 取得像素原始 Data
             const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
             const pixels = imgData.data;
 
@@ -185,17 +173,12 @@
             requestAnimationFrame(processFrame);
         }
 
-        // 4. Render: ASCII 風格
         function renderAscii(pixels, cols, rows) {
             let result = '';
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
                     const idx = (y * cols + x) * 4;
-                    const r = pixels[idx];
-                    const g = pixels[idx + 1];
-                    const b = pixels[idx + 2];
-
-                    const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+                    const brightness = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
                     const charIdx = Math.floor((brightness / 255) * (asciiChars.length - 1));
                     result += asciiChars[charIdx];
                 }
@@ -204,20 +187,15 @@
             asciiOutput.textContent = result;
         }
 
-        // 5. Render: GameBoy 綠像素風格 + Y2K 橘色日期時間戳記
         function renderGameboy(pixels, cols, rows) {
-            const scale = 6;
+            const scale = 4;
             pixelCanvas.width = cols * scale;
             pixelCanvas.height = rows * scale;
 
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
                     const idx = (y * cols + x) * 4;
-                    const r = pixels[idx];
-                    const g = pixels[idx + 1];
-                    const b = pixels[idx + 2];
-
-                    const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+                    const brightness = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
                     const colorIdx = Math.floor((brightness / 255) * 3.99);
                     const [gr, gg, gb] = gbPalette[colorIdx];
 
@@ -226,11 +204,9 @@
                 }
             }
 
-            // 繪製 Y2K 橘色日期時間戳記
             drawY2KStamp(pixelCtx, pixelCanvas.width, pixelCanvas.height);
         }
 
-        // 6. Y2K 橘色日期時間戳記繪製函數
         function drawY2KStamp(ctx, width, height) {
             const now = new Date();
             const year = String(now.getFullYear()).slice(-2);
@@ -241,16 +217,15 @@
             
             const dateStr = `'${year} ${month} ${day}  ${hours}:${mins}`;
             
-            ctx.font = 'bold 16px "Courier New", monospace';
-            ctx.fillStyle = '#ff8c00'; // Y2K 經典數位相機橘
+            ctx.font = 'bold 20px "Courier New", monospace';
+            ctx.fillStyle = '#ff8c00';
             ctx.textAlign = 'right';
             ctx.shadowColor = 'rgba(0,0,0,0.8)';
             ctx.shadowBlur = 4;
-            ctx.fillText(dateStr, width - 20, height - 15);
-            ctx.shadowBlur = 0; // 重置 Shadow
+            ctx.fillText(dateStr, width - 25, height - 20);
+            ctx.shadowBlur = 0;
         }
 
-        // 7. 一鍵拍照與下載
         function takeSnapshot() {
             const previewBox = document.getElementById('previewBox');
             previewBox.classList.add('flash');
@@ -260,20 +235,19 @@
             const saveCtx = saveCanvas.getContext('2d');
 
             if (currentMode === 'ascii') {
-                saveCanvas.width = 800;
-                saveCanvas.height = 600;
+                saveCanvas.width = 1280;
+                saveCanvas.height = 960;
                 saveCtx.fillStyle = '#000000';
                 saveCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
                 
                 saveCtx.fillStyle = '#00ff66';
-                saveCtx.font = '12px "Courier New", monospace';
+                saveCtx.font = '7px "Courier New", monospace';
                 
                 const lines = asciiOutput.textContent.split('\n');
                 lines.forEach((line, i) => {
-                    saveCtx.fillText(line, 20, 30 + (i * 8));
+                    saveCtx.fillText(line, 15, 20 + (i * 6));
                 });
 
-                // ASCII 模式也加入 Y2K 日期戳記
                 drawY2KStamp(saveCtx, saveCanvas.width, saveCanvas.height);
             } else {
                 saveCanvas.width = pixelCanvas.width;
@@ -287,7 +261,6 @@
             link.click();
         }
 
-        // 啟動專案
         initCamera();
     </script>
 </body>
