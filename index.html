@@ -25,7 +25,6 @@
             transition: all 0.3s ease;
         }
 
-        /* 偽人模式下的驚悚標題效果 */
         h1.alternate-mode {
             color: #ff0033;
             text-shadow: 0 0 15px rgba(255,0,51,0.8);
@@ -78,7 +77,6 @@
             pointer-events: none;
         }
 
-        /* 偽人模式的時間戳記跳動 */
         .timestamp-stamp.glitch {
             color: #ff0033;
             text-shadow: 0 0 8px rgba(255,0,0,0.9);
@@ -135,7 +133,6 @@
             padding: 8px 20px; border-radius: 4px; cursor: pointer;
         }
     </style>
-    <!-- 引入 Google MediaPipe Face Landmarker 人臉辨識庫 -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/v0.10.0/vision/vision_bundle.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -197,17 +194,14 @@
         let facingMode = 'user';
         let currentStream = null;
 
-        // 彩蛋控制變數
         let switchCount = 0;
-        let isAlternateMode = false; // 是否進入「偽人模式」
+        let isAlternateMode = false;
         let faceLandmarker = null;
-        let lastFaceLandmarks = null;
 
         const asciiChars = ' .`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
         const gbPalette = [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]];
         const monoPalette = [[10, 10, 10], [80, 80, 80], [160, 160, 160], [240, 240, 240]];
 
-        // 初始化 MediaPipe AI 人臉追蹤
         async function initFaceLandmarker() {
             try {
                 const { FaceLandmarker, FilesetResolver } = window.vision;
@@ -223,7 +217,7 @@
                     numFaces: 1
                 });
             } catch (e) {
-                console.log("MediaPipe AI 模型載入失敗，將退回基礎扭曲演算法", e);
+                console.log("MediaPipe 模型載入備用模式");
             }
         }
 
@@ -246,21 +240,18 @@
                 requestAnimationFrame(processFrame);
             } catch (err) {
                 console.error(err);
-                alert("無法存取攝影機，請檢查權限。");
+                alert("無法存取攝影機。");
             }
         }
 
-        // 核心切換鏡頭邏輯（每滿 4 次觸發偽人彩蛋）
         function switchCamera() {
             switchCount++;
             
-            if (switchCount % 4 === 0) {
-                // 觸發偽人模式
+            if (switchCount % 3 === 0) {
                 isAlternateMode = true;
                 document.getElementById('mainTitle').classList.add('alternate-mode');
                 asciiStamp.classList.add('glitch');
             } else {
-                // 回歸正常模式，切換鏡頭
                 isAlternateMode = false;
                 document.getElementById('mainTitle').classList.remove('alternate-mode');
                 asciiStamp.classList.remove('glitch');
@@ -322,13 +313,14 @@
             }
             hiddenCtx.restore();
 
-            // 如果是在偽人模式下，進行 AI 人臉識別與扭曲算子
+            // 執行偽人扭曲算子
             if (isAlternateMode) {
                 detectAndWarpFace(cols, rows);
             }
 
-            const activeCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
-            const imgData = activeCanvas.getContext('2d').getImageData(0, 0, cols, rows);
+            // 關鍵修復：不管是 ASCII 還是 Pixel，偽人模式時都讀取 warpCanvas！
+            const targetCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
+            const imgData = targetCanvas.getContext('2d').getImageData(0, 0, cols, rows);
 
             if (currentMode === 'ascii') {
                 renderAscii(imgData.data, cols, rows);
@@ -340,39 +332,55 @@
             requestAnimationFrame(processFrame);
         }
 
-        // 偽人化扭曲演算法：把嘴巴往下與向兩側撕裂
+        // 精確嘴巴鎖定與極端拉扯演算法
         function detectAndWarpFace(cols, rows) {
             warpCanvas.width = cols;
             warpCanvas.height = rows;
 
-            // 1. 先把原圖畫上準備扭曲
-            warpCtx.drawImage(hiddenCanvas, 0, 0);
+            let mouthX = cols * 0.5;
+            let mouthY = rows * 0.68; // 往下移至嘴巴預測區
 
-            // 2. 進行 MediaPipe AI 人臉檢測
+            // 1. 優先使用 AI 人臉關鍵點
+            let aiFound = false;
             if (faceLandmarker && video.currentTime > 0) {
                 try {
                     const results = faceLandmarker.detectForVideo(video, performance.now());
                     if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-                        lastFaceLandmarks = results.faceLandmarks[0];
+                        const lm = results.faceLandmarks[0][14]; // 下唇點
+                        mouthX = (facingMode === 'user') ? (1 - lm.x) * cols : lm.x * cols;
+                        mouthY = lm.y * rows;
+                        aiFound = true;
                     }
                 } catch(e){}
             }
 
+            // 2. 若 AI 未捕捉，啟動動態暗色嘴腔區塊掃描
             const srcData = hiddenCtx.getImageData(0, 0, cols, rows);
-            const dstData = warpCtx.createImageData(cols, rows);
+            const pixels = srcData.data;
 
-            let mouthX = cols * 0.5;
-            let mouthY = rows * 0.65;
-
-            // 如果抓到 AI 人臉點，拿嘴巴的精確座標 (Landmark 13: 上唇, Landmark 14: 下唇)
-            if (lastFaceLandmarks) {
-                const landmarkMouth = lastFaceLandmarks[14];
-                // Selfie 視角需要 X 軸反轉
-                mouthX = (facingMode === 'user') ? (1 - landmarkMouth.x) * cols : landmarkMouth.x * cols;
-                mouthY = landmarkMouth.y * rows;
+            if (!aiFound) {
+                let darkSumX = 0, darkSumY = 0, darkCount = 0;
+                // 在下半臉區域搜尋張開嘴巴的深色像素
+                for (let y = Math.floor(rows * 0.5); y < Math.floor(rows * 0.85); y++) {
+                    for (let x = Math.floor(cols * 0.25); x < Math.floor(cols * 0.75); x++) {
+                        const idx = (y * cols + x) * 4;
+                        const brightness = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+                        if (brightness < 50) { // 暗部/嘴腔
+                            darkSumX += x;
+                            darkSumY += y;
+                            darkCount++;
+                        }
+                    }
+                }
+                if (darkCount > 10) {
+                    mouthX = darkSumX / darkCount;
+                    mouthY = darkSumY / darkCount;
+                }
             }
 
-            // 3. 網格拉扯變形 (Mouth Distortion Mesh)
+            // 3. 執行「撕裂裂嘴笑」與「極端往下伸長」像素位移
+            const dstData = warpCtx.createImageData(cols, rows);
+
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
                     let dx = x - mouthX;
@@ -382,13 +390,19 @@
                     let srcX = x;
                     let srcY = y;
 
-                    // 在嘴巴周圍 35 像素範圍內施加強烈扭曲
-                    const radius = 35;
+                    const radius = cols * 0.35; // 動態作用半徑
                     if (dist < radius) {
-                        let factor = Math.pow((1 - dist / radius), 2);
-                        // 縱向往下大幅拉扯，橫向向兩端撕裂成恐怖巨笑
-                        srcY -= dy * factor * 1.8;
-                        srcX -= Math.sign(dx) * Math.pow(Math.abs(dx), 0.7) * factor * 2.2;
+                        let factor = Math.pow((1 - dist / radius), 1.8);
+                        
+                        // 強制嘴唇向下爆發拉長 (Vertical Stretch)
+                        if (dy > 0) {
+                            srcY -= dy * factor * 2.2;
+                        } else {
+                            srcY -= dy * factor * 0.8;
+                        }
+
+                        // 嘴角向左右極端撕裂 (Horizontal Tear)
+                        srcX -= Math.sign(dx) * Math.pow(Math.abs(dx), 0.6) * factor * 3.5;
                     }
 
                     srcX = Math.max(0, Math.min(cols - 1, Math.floor(srcX)));
@@ -397,9 +411,9 @@
                     const srcIdx = (srcY * cols + srcX) * 4;
                     const dstIdx = (y * cols + x) * 4;
 
-                    dstData.data[dstIdx] = srcData.data[srcIdx];
-                    dstData.data[dstIdx + 1] = srcData.data[srcIdx + 1];
-                    dstData.data[dstIdx + 2] = srcData.data[srcIdx + 2];
+                    dstData.data[dstIdx] = pixels[srcIdx];
+                    dstData.data[dstIdx + 1] = pixels[srcIdx + 1];
+                    dstData.data[dstIdx + 2] = pixels[srcIdx + 2];
                     dstData.data[dstIdx + 3] = 255;
                 }
             }
@@ -470,10 +484,8 @@
             drawY2KStampOnCanvas(pixelCtx, pixelCanvas.width, pixelCanvas.height);
         }
 
-        // 亂碼 / 驚悚時間戳記產生器
         function getY2KTimeString() {
             if (isAlternateMode) {
-                // 亂碼閃爍跳動 (例如 '99 12 31 23:59 或亂碼數字)
                 const glitchArr = ["'99 12 31  23:59", "'66 06 06  06:66", "'?? ?? ??  ??:??", "'99 99 99  99:99"];
                 if (Math.random() < 0.3) {
                     return glitchArr[Math.floor(Math.random() * glitchArr.length)];
@@ -529,8 +541,8 @@
                 saveCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
                 saveCtx.font = 'bold 7px "Courier New", monospace';
 
-                const activeCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
-                const imgData = activeCanvas.getContext('2d').getImageData(0, 0, cols, rows);
+                const targetCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
+                const imgData = targetCanvas.getContext('2d').getImageData(0, 0, cols, rows);
                 const pixels = imgData.data;
 
                 for (let y = 0; y < rows; y++) {
