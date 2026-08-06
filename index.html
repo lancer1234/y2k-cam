@@ -97,7 +97,7 @@
             100% { opacity: 1; }
         }
     </style>
-    <!-- 引入 html2canvas 確保拍照存圖100%所見即所得 -->
+    <!-- 引入 html2canvas -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
@@ -117,8 +117,8 @@
         </div>
 
         <div class="controls">
-            <button class="btn active" id="btnAscii" onclick="setMode('ascii')">ASCII 高細節風</button>
-            <button class="btn" id="btnGameboy" onclick="setMode('gameboy')">GameBoy 綠像素</button>
+            <button class="btn active" id="btnAscii" onclick="setMode('ascii')">ASCII</button>
+            <button class="btn" id="btnGameboy" onclick="setMode('gameboy')">GameBoy</button>
             <button class="btn" onclick="takeSnapshot()">📷 拍照下載</button>
         </div>
     </div>
@@ -273,7 +273,7 @@
             ctx.shadowBlur = 0;
         }
 
-        // 拍照快照：ASCII 模式使用 html2canvas 所見即所得高畫質存圖
+        // 拍照快照：ASCII 模式
         async function takeSnapshot() {
             const previewBox = document.getElementById('previewBox');
             previewBox.classList.add('flash');
@@ -282,7 +282,7 @@
             if (currentMode === 'ascii') {
                 const canvas = await html2canvas(asciiWrapper, {
                     backgroundColor: '#000000',
-                    scale: 2 // 2倍高解析度採樣，下載下來超清晰！
+                    scale: 2 
                 });
                 
                 const link = document.createElement('a');
