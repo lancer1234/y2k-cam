@@ -26,7 +26,7 @@
 
         #webcam, #hiddenCanvas { display: none; }
 
-        /* 預覽視窗外框：自動貼合內容比例 */
+        /* 預覽視窗外框：貼合畫面 */
         .preview-box {
             position: relative;
             border: 2px solid #333; border-radius: 8px;
@@ -36,17 +36,17 @@
             max-width: 100%;
         }
 
-        /* ASCII 模式畫布 */
+        /* ASCII 模式畫布：調整為正確長寬比例 */
         #asciiOutput {
             font-family: "Courier New", Courier, monospace;
             white-space: pre; 
-            line-height: 0.6; 
-            font-size: 7px; /* 調整為清晰適合的字級 */
-            letter-spacing: 0.5px; 
+            line-height: 0.65; 
+            font-size: 8px; 
+            letter-spacing: 0px; 
             color: #00ff66; 
             background: #000;
             margin: 0; 
-            padding: 10px; 
+            padding: 15px; 
             font-weight: bold; 
             user-select: none;
             display: block;
@@ -158,9 +158,9 @@
             const videoAspect = video.videoHeight / video.videoWidth;
 
             if (currentMode === 'ascii') {
-                // ASCII 模式：考量字型的高寬比例(約 1.8)，計算正確的行列數避免壓縮
-                const cols = 120;
-                const rows = Math.floor(cols * videoAspect * 0.55);
+                // 寬度 130，高度加倍（x 1.05）補償等寬字型的瘦長比例，讓臉型呈現 1:1 正確比例
+                const cols = 130;
+                const rows = Math.floor(cols * videoAspect * 1.05);
 
                 hiddenCanvas.width = cols;
                 hiddenCanvas.height = rows;
@@ -173,7 +173,6 @@
                 const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
                 renderAscii(imgData.data, cols, rows);
             } else {
-                // GameBoy 模式：維持 4:3 或原始比例
                 const cols = 160;
                 const rows = Math.floor(cols * videoAspect);
 
@@ -245,6 +244,7 @@
             ctx.shadowBlur = 0;
         }
 
+        // 重寫：動態計算下載 Canvas 寬高，告別黑邊與壓扁
         function takeSnapshot() {
             const previewBox = document.getElementById('previewBox');
             previewBox.classList.add('flash');
@@ -254,17 +254,25 @@
             const saveCtx = saveCanvas.getContext('2d');
 
             if (currentMode === 'ascii') {
-                saveCanvas.width = 1000;
-                saveCanvas.height = 750;
+                const lines = asciiOutput.textContent.split('\n');
+                const lineCount = lines.length - 1;
+                const charCount = lines[0].length;
+
+                const charWidth = 7;   // 每個字元的畫布寬度
+                const lineHeight = 9;  // 每個字元的畫布高度
+
+                // 動態計算 Canvas 尺寸，精確貼合文字
+                saveCanvas.width = charCount * charWidth + 40;
+                saveCanvas.height = lineCount * lineHeight + 50;
+
                 saveCtx.fillStyle = '#000000';
                 saveCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
                 
                 saveCtx.fillStyle = '#00ff66';
-                saveCtx.font = '8px "Courier New", monospace';
+                saveCtx.font = 'bold 10px "Courier New", monospace';
                 
-                const lines = asciiOutput.textContent.split('\n');
                 lines.forEach((line, i) => {
-                    saveCtx.fillText(line, 20, 25 + (i * 7));
+                    saveCtx.fillText(line, 20, 25 + (i * lineHeight));
                 });
 
                 drawY2KStamp(saveCtx, saveCanvas.width, saveCanvas.height);
