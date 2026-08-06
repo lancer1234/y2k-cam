@@ -16,7 +16,7 @@
 
         .container {
             display: flex; flex-direction: column; align-items: center;
-            width: 100%; max-width: 1000px; padding: 20px;
+            width: 100%; max-width: 900px; padding: 20px;
         }
 
         h1 {
@@ -26,32 +26,39 @@
 
         #webcam, #hiddenCanvas { display: none; }
 
-        /* RWD 預覽視窗容器：寬度自動隨網頁縮放 */
+        /* 預覽視窗外框：自動貼合內容比例 */
         .preview-box {
             position: relative;
-            width: 100%; max-width: 800px;
-            aspect-ratio: 4 / 3; /* 固定 4:3 比例，跟相機一致 */
             border: 2px solid #333; border-radius: 8px;
             overflow: hidden; background: #000;
             box-shadow: 0 10px 30px rgba(0,0,0,0.8);
             display: flex; justify-content: center; align-items: center;
+            max-width: 100%;
         }
 
-        /* ASCII 模式畫布：自動填滿容器 */
+        /* ASCII 模式畫布 */
         #asciiOutput {
             font-family: "Courier New", Courier, monospace;
-            white-space: pre; line-height: 0.55; font-size: 5px; /* 降低字級以大幅增加解析度與細節 */
-            letter-spacing: 0.5px; color: #00ff66; background: #000;
-            margin: 0; padding: 0; font-weight: bold; user-select: none;
-            display: block; width: 100%; height: 100%;
-            overflow: hidden; text-align: center;
+            white-space: pre; 
+            line-height: 0.6; 
+            font-size: 7px; /* 調整為清晰適合的字級 */
+            letter-spacing: 0.5px; 
+            color: #00ff66; 
+            background: #000;
+            margin: 0; 
+            padding: 10px; 
+            font-weight: bold; 
+            user-select: none;
+            display: block;
+            text-align: center;
         }
 
-        /* GameBoy 模式畫布：填滿容器並保持高畫質像素 */
+        /* GameBoy 模式畫布 */
         #pixelCanvas {
-            width: 100%; height: 100%; object-fit: contain;
-            image-rendering: pixelated;
             display: none;
+            max-width: 100%;
+            height: auto;
+            image-rendering: pixelated;
         }
 
         .controls {
@@ -105,7 +112,6 @@
 
         let currentMode = 'ascii';
         
-        // 擴充 ASCII 字元階梯，讓暗部到亮部的過渡更細膩
         const asciiChars = ' .`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
         
         const gbPalette = [
@@ -149,25 +155,38 @@
         function processFrame() {
             if (video.paused || video.ended) return;
 
-            // 提升採樣點至 200 行，大幅增加五官與線條細節
-            const cols = 200; 
-            const rows = Math.floor(cols * (video.videoHeight / video.videoWidth) * 0.5);
-
-            hiddenCanvas.width = cols;
-            hiddenCanvas.height = rows;
-
-            hiddenCtx.save();
-            hiddenCtx.scale(-1, 1);
-            hiddenCtx.drawImage(video, -cols, 0, cols, rows);
-            hiddenCtx.restore();
-
-            const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
-            const pixels = imgData.data;
+            const videoAspect = video.videoHeight / video.videoWidth;
 
             if (currentMode === 'ascii') {
-                renderAscii(pixels, cols, rows);
+                // ASCII 模式：考量字型的高寬比例(約 1.8)，計算正確的行列數避免壓縮
+                const cols = 120;
+                const rows = Math.floor(cols * videoAspect * 0.55);
+
+                hiddenCanvas.width = cols;
+                hiddenCanvas.height = rows;
+
+                hiddenCtx.save();
+                hiddenCtx.scale(-1, 1);
+                hiddenCtx.drawImage(video, -cols, 0, cols, rows);
+                hiddenCtx.restore();
+
+                const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
+                renderAscii(imgData.data, cols, rows);
             } else {
-                renderGameboy(pixels, cols, rows);
+                // GameBoy 模式：維持 4:3 或原始比例
+                const cols = 160;
+                const rows = Math.floor(cols * videoAspect);
+
+                hiddenCanvas.width = cols;
+                hiddenCanvas.height = rows;
+
+                hiddenCtx.save();
+                hiddenCtx.scale(-1, 1);
+                hiddenCtx.drawImage(video, -cols, 0, cols, rows);
+                hiddenCtx.restore();
+
+                const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
+                renderGameboy(imgData.data, cols, rows);
             }
 
             requestAnimationFrame(processFrame);
@@ -217,12 +236,12 @@
             
             const dateStr = `'${year} ${month} ${day}  ${hours}:${mins}`;
             
-            ctx.font = 'bold 20px "Courier New", monospace';
+            ctx.font = 'bold 18px "Courier New", monospace';
             ctx.fillStyle = '#ff8c00';
             ctx.textAlign = 'right';
             ctx.shadowColor = 'rgba(0,0,0,0.8)';
             ctx.shadowBlur = 4;
-            ctx.fillText(dateStr, width - 25, height - 20);
+            ctx.fillText(dateStr, width - 20, height - 15);
             ctx.shadowBlur = 0;
         }
 
@@ -235,17 +254,17 @@
             const saveCtx = saveCanvas.getContext('2d');
 
             if (currentMode === 'ascii') {
-                saveCanvas.width = 1280;
-                saveCanvas.height = 960;
+                saveCanvas.width = 1000;
+                saveCanvas.height = 750;
                 saveCtx.fillStyle = '#000000';
                 saveCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
                 
                 saveCtx.fillStyle = '#00ff66';
-                saveCtx.font = '7px "Courier New", monospace';
+                saveCtx.font = '8px "Courier New", monospace';
                 
                 const lines = asciiOutput.textContent.split('\n');
                 lines.forEach((line, i) => {
-                    saveCtx.fillText(line, 15, 20 + (i * 6));
+                    saveCtx.fillText(line, 20, 25 + (i * 7));
                 });
 
                 drawY2KStamp(saveCtx, saveCanvas.width, saveCanvas.height);
