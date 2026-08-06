@@ -26,7 +26,7 @@
 
         #webcam, #hiddenCanvas { display: none; }
 
-        /* 預覽視窗外框：貼合畫面 */
+        /* 預覽容器：外框與相機預覽 */
         .preview-box {
             position: relative;
             border: 2px solid #333; border-radius: 8px;
@@ -36,7 +36,14 @@
             max-width: 100%;
         }
 
-        /* ASCII 模式畫布：調整為正確長寬比例 */
+        /* ASCII 畫面區域 */
+        #asciiWrapper {
+            position: relative;
+            background: #000;
+            padding: 15px;
+            display: block;
+        }
+
         #asciiOutput {
             font-family: "Courier New", Courier, monospace;
             white-space: pre; 
@@ -44,13 +51,23 @@
             font-size: 8px; 
             letter-spacing: 0px; 
             color: #00ff66; 
-            background: #000;
             margin: 0; 
-            padding: 15px; 
             font-weight: bold; 
             user-select: none;
-            display: block;
             text-align: center;
+        }
+
+        /* Y2K 時間戳記 overlay */
+        .timestamp-stamp {
+            position: absolute;
+            bottom: 15px;
+            right: 20px;
+            font-family: "Courier New", Courier, monospace;
+            font-weight: bold;
+            font-size: 18px;
+            color: #ff8c00;
+            text-shadow: 0 0 4px rgba(0,0,0,0.9);
+            pointer-events: none;
         }
 
         /* GameBoy 模式畫布 */
@@ -80,6 +97,8 @@
             100% { opacity: 1; }
         }
     </style>
+    <!-- 引入 html2canvas 確保拍照存圖100%所見即所得 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
 
@@ -90,7 +109,10 @@
         <canvas id="hiddenCanvas"></canvas>
 
         <div class="preview-box" id="previewBox">
-            <pre id="asciiOutput"></pre>
+            <div id="asciiWrapper">
+                <pre id="asciiOutput"></pre>
+                <div class="timestamp-stamp" id="asciiStamp"></div>
+            </div>
             <canvas id="pixelCanvas"></canvas>
         </div>
 
@@ -106,7 +128,9 @@
         const hiddenCanvas = document.getElementById('hiddenCanvas');
         const hiddenCtx = hiddenCanvas.getContext('2d', { willReadFrequently: true });
         
+        const asciiWrapper = document.getElementById('asciiWrapper');
         const asciiOutput = document.getElementById('asciiOutput');
+        const asciiStamp = document.getElementById('asciiStamp');
         const pixelCanvas = document.getElementById('pixelCanvas');
         const pixelCtx = pixelCanvas.getContext('2d');
 
@@ -144,10 +168,10 @@
             document.getElementById('btnGameboy').classList.toggle('active', mode === 'gameboy');
 
             if (mode === 'ascii') {
-                asciiOutput.style.display = 'block';
+                asciiWrapper.style.display = 'block';
                 pixelCanvas.style.display = 'none';
             } else {
-                asciiOutput.style.display = 'none';
+                asciiWrapper.style.display = 'none';
                 pixelCanvas.style.display = 'block';
             }
         }
@@ -158,9 +182,8 @@
             const videoAspect = video.videoHeight / video.videoWidth;
 
             if (currentMode === 'ascii') {
-                // 寬度 130，高度加倍（x 1.05）補償等寬字型的瘦長比例，讓臉型呈現 1:1 正確比例
-                const cols = 130;
-                const rows = Math.floor(cols * videoAspect * 1.05);
+                const cols = 120;
+                const rows = Math.floor(cols * videoAspect * 0.95);
 
                 hiddenCanvas.width = cols;
                 hiddenCanvas.height = rows;
@@ -172,6 +195,7 @@
 
                 const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
                 renderAscii(imgData.data, cols, rows);
+                updateY2KStampText(asciiStamp);
             } else {
                 const cols = 160;
                 const rows = Math.floor(cols * videoAspect);
@@ -222,70 +246,55 @@
                 }
             }
 
-            drawY2KStamp(pixelCtx, pixelCanvas.width, pixelCanvas.height);
+            drawY2KStampOnCanvas(pixelCtx, pixelCanvas.width, pixelCanvas.height);
         }
 
-        function drawY2KStamp(ctx, width, height) {
+        function getY2KTimeString() {
             const now = new Date();
             const year = String(now.getFullYear()).slice(-2);
             const month = String(now.getMonth() + 1).padStart(2, '0');
             const day = String(now.getDate()).padStart(2, '0');
             const hours = String(now.getHours()).padStart(2, '0');
             const mins = String(now.getMinutes()).padStart(2, '0');
-            
-            const dateStr = `'${year} ${month} ${day}  ${hours}:${mins}`;
-            
+            return `'${year} ${month} ${day}  ${hours}:${mins}`;
+        }
+
+        function updateY2KStampText(element) {
+            element.textContent = getY2KTimeString();
+        }
+
+        function drawY2KStampOnCanvas(ctx, width, height) {
             ctx.font = 'bold 18px "Courier New", monospace';
             ctx.fillStyle = '#ff8c00';
             ctx.textAlign = 'right';
             ctx.shadowColor = 'rgba(0,0,0,0.8)';
             ctx.shadowBlur = 4;
-            ctx.fillText(dateStr, width - 20, height - 15);
+            ctx.fillText(getY2KTimeString(), width - 20, height - 15);
             ctx.shadowBlur = 0;
         }
 
-        // 重寫：動態計算下載 Canvas 寬高，告別黑邊與壓扁
-        function takeSnapshot() {
+        // 拍照快照：ASCII 模式使用 html2canvas 所見即所得高畫質存圖
+        async function takeSnapshot() {
             const previewBox = document.getElementById('previewBox');
             previewBox.classList.add('flash');
             setTimeout(() => previewBox.classList.remove('flash'), 200);
 
-            const saveCanvas = document.createElement('canvas');
-            const saveCtx = saveCanvas.getContext('2d');
-
             if (currentMode === 'ascii') {
-                const lines = asciiOutput.textContent.split('\n');
-                const lineCount = lines.length - 1;
-                const charCount = lines[0].length;
-
-                const charWidth = 7;   // 每個字元的畫布寬度
-                const lineHeight = 9;  // 每個字元的畫布高度
-
-                // 動態計算 Canvas 尺寸，精確貼合文字
-                saveCanvas.width = charCount * charWidth + 40;
-                saveCanvas.height = lineCount * lineHeight + 50;
-
-                saveCtx.fillStyle = '#000000';
-                saveCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
-                
-                saveCtx.fillStyle = '#00ff66';
-                saveCtx.font = 'bold 10px "Courier New", monospace';
-                
-                lines.forEach((line, i) => {
-                    saveCtx.fillText(line, 20, 25 + (i * lineHeight));
+                const canvas = await html2canvas(asciiWrapper, {
+                    backgroundColor: '#000000',
+                    scale: 2 // 2倍高解析度採樣，下載下來超清晰！
                 });
-
-                drawY2KStamp(saveCtx, saveCanvas.width, saveCanvas.height);
+                
+                const link = document.createElement('a');
+                link.download = `y2k-cam-ascii-${Date.now()}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
             } else {
-                saveCanvas.width = pixelCanvas.width;
-                saveCanvas.height = pixelCanvas.height;
-                saveCtx.drawImage(pixelCanvas, 0, 0);
+                const link = document.createElement('a');
+                link.download = `y2k-cam-gb-${Date.now()}.png`;
+                link.href = pixelCanvas.toDataURL('image/png');
+                link.click();
             }
-
-            const link = document.createElement('a');
-            link.download = `y2k-cam-${Date.now()}.png`;
-            link.href = saveCanvas.toDataURL('image/png');
-            link.click();
         }
 
         initCamera();
