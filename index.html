@@ -119,7 +119,7 @@
             [155, 188, 15]    // 明綠/最亮
         ];
 
-        // 1. 初始化攝像頭
+        // 1. 修復 Safari 的 Camera 啟動邏輯
         async function initCamera() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
@@ -127,15 +127,20 @@
                     audio: false
                 });
                 video.srcObject = stream;
-                video.onloadedmetadata = () => {
-                    requestAnimationFrame(processFrame);
-                };
+        
+                // 解決 Safari 不觸發 loadedmetadata 的問題
+                await video.play();
+        
+                // 強制進入預設 Mode 並啟動渲染迴圈
+                setMode('ascii');
+                requestAnimationFrame(processFrame);
             } catch (err) {
-                alert("無法存取攝影機，請確保已授權攝影機權限。");
+                console.error(err);
+                alert("無法存取攝影機，請檢查瀏覽器相機權限設定。");
             }
         }
 
-        // 2. 切換模式
+        // 2. 修復 UI 與 Canvas 顯示切換
         function setMode(mode) {
             currentMode = mode;
             document.getElementById('btnAscii').classList.toggle('active', mode === 'ascii');
