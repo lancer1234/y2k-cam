@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Y2K CAM</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 0;
+            background-color: #0d0d0d; color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 100vh; overflow-x: hidden;
+        }
+
+        .container {
+            display: flex; flex-direction: column; align-items: center;
+            width: 100%; max-width: 900px; padding: 15px;
+        }
+
+        h1 {
+            font-size: 1.5rem; font-weight: 600; letter-spacing: 3px;
+            margin: 10px 0 15px 0; color: #ff8c00; text-shadow: 0 0 10px rgba(255,140,0,0.5);
+            transition: all 0.3s ease;
+        }
+
+        h1.alternate-mode {
+            color: #ff0033;
+            text-shadow: 0 0 15px rgba(255,0,51,0.8);
+            letter-spacing: 5px;
+        }
+
+        #webcam, #hiddenCanvas, #warpCanvas { display: none; }
+
+        .preview-box {
+            position: relative;
+            border: 2px solid #333; border-radius: 8px;
+            overflow: hidden; background: #000;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            display: flex; justify-content: center; align-items: center;
+            max-width: 100%; max-height: 65vh;
+        }
+
+        #asciiWrapper {
+            position: relative;
+            background: #000;
+            padding: 10px;
+            display: block;
+            max-height: 65vh;
+            overflow: hidden;
+        }
+
+        #asciiOutput {
+            font-family: "Courier New", Courier, monospace;
+            white-space: pre; 
+            line-height: 0.55; 
+            font-size: 7px; 
+            letter-spacing: 0px; 
+            margin: 0; 
+            font-weight: bold; 
+            user-select: none;
+            text-align: center;
+            color: #00ff66;
+            transition: color 0.3s ease;
+        }
+
+        .timestamp-stamp {
+            position: absolute;
+            bottom: 12px;
+            right: 15px;
+            font-family: "Courier New", Courier, monospace;
+            font-weight: bold;
+            font-size: 14px;
+            color: #ff8c00;
+            text-shadow: 0 0 4px rgba(0,0,0,0.9);
+            pointer-events: none;
+        }
+
+        .timestamp-stamp.glitch {
+            color: #ff0033;
+            text-shadow: 0 0 8px rgba(255,0,0,0.9);
+        }
+
+        #pixelCanvas {
+            display: none;
+            max-width: 100%;
+            max-height: 65vh;
+            object-fit: contain;
+            image-rendering: pixelated;
+        }
+
+        .controls {
+            margin-top: 15px; display: flex; gap: 6px;
+            flex-wrap: wrap; justify-content: center; align-items: center;
+            width: 100%;
+        }
+
+        .btn {
+            background: #1a1a1a; border: 1px solid #444; color: #ccc;
+            padding: 8px 12px; font-size: 0.85rem; cursor: pointer;
+            border-radius: 4px; transition: all 0.2s ease;
+        }
+        .btn:hover { background: #333; color: #fff; border-color: #666; }
+        .btn.active { background: #ff8c00; color: #000; border-color: #ff8c00; font-weight: bold; }
+        
+        .divider {
+            width: 1px; height: 20px; background: #444; margin: 0 4px;
+        }
+
+        .flash { animation: flashAnim 0.2s ease-out; }
+        @keyframes flashAnim {
+            0% { opacity: 0.3; background: white; }
+            100% { opacity: 1; }
+        }
+
+        .modal {
+            display: none; position: fixed; top: 0; left: 0;
+            width: 100vw; height: 100vh; background: rgba(0,0,0,0.9);
+            z-index: 999; flex-direction: column; justify-content: center; align-items: center;
+            padding: 20px;
+        }
+        .modal.show { display: flex; }
+        .modal img {
+            max-width: 90%; max-height: 70vh; border: 2px solid #ff8c00;
+            border-radius: 6px; box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+        .modal-tip {
+            margin-top: 15px; color: #ff8c00; font-size: 0.9rem; text-align: center;
+        }
+        .modal-close {
+            margin-top: 15px; background: #333; border: 1px solid #666; color: white;
+            padding: 8px 20px; border-radius: 4px; cursor: pointer;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/v0.10.0/vision/vision_bundle.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div class="container">
+        <h1 id="mainTitle">Y2K CAM</h1>
+
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="hiddenCanvas"></canvas>
+        <canvas id="warpCanvas"></canvas>
+
+        <div class="preview-box" id="previewBox">
+            <div id="asciiWrapper">
+                <pre id="asciiOutput"></pre>
+                <div class="timestamp-stamp" id="asciiStamp"></div>
+            </div>
+            <canvas id="pixelCanvas"></canvas>
+        </div>
+
+        <div class="controls">
+            <button class="btn active" id="btnAscii" onclick="setMode('ascii')">ASCII 文字</button>
+            <button class="btn" id="btnPixel" onclick="setMode('pixel')">8-bit 像素</button>
+            
+            <div class="divider"></div>
+
+            <button class="btn active" id="btnGreen" onclick="setColorTheme('green')">經典綠</button>
+            <button class="btn" id="btnMono" onclick="setColorTheme('mono')">黑白灰階</button>
+            <button class="btn" id="btnColor" onclick="setColorTheme('color')">真實彩色</button>
+            
+            <div class="divider"></div>
+
+            <button class="btn" onclick="switchCamera()">🔄 鏡頭</button>
+            <button class="btn" onclick="takeSnapshot()" style="border-color: #ff8c00; color: #ff8c00;">📷 儲存照片</button>
+        </div>
+    </div>
+
+    <div class="modal" id="photoModal">
+        <img id="photoResult" alt="Snapshot">
+        <div class="modal-tip">長按上方圖片即可「儲存至相簿」或分享</div>
+        <button class="modal-close" onclick="closeModal()">關閉</button>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const hiddenCanvas = document.getElementById('hiddenCanvas');
+        const hiddenCtx = hiddenCanvas.getContext('2d', { willReadFrequently: true });
+
+        const warpCanvas = document.getElementById('warpCanvas');
+        const warpCtx = warpCanvas.getContext('2d', { willReadFrequently: true });
+        
+        const asciiWrapper = document.getElementById('asciiWrapper');
+        const asciiOutput = document.getElementById('asciiOutput');
+        const asciiStamp = document.getElementById('asciiStamp');
+        const pixelCanvas = document.getElementById('pixelCanvas');
+        const pixelCtx = pixelCanvas.getContext('2d');
+
+        let currentMode = 'ascii';
+        let colorTheme = 'green';
+        let facingMode = 'user';
+        let currentStream = null;
+
+        let switchCount = 0;
+        let isAlternateMode = false;
+        let faceLandmarker = null;
+        
+        // 陣列化平滑記憶（Exponential Moving Average）
+        let smoothedLandmarks = null;
+        let isDetecting = false;
+
+        const asciiChars = ' .`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
+        const gbPalette = [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]];
+        const monoPalette = [[10, 10, 10], [80, 80, 80], [160, 160, 160], [240, 240, 240]];
+
+        // MediaPipe 468 點基本三角面片拓撲 (Simplistic Triangulation Mesh)
+        // 針對 嘴部 (78, 308, 13, 14, 0, 17)、眼睛 (33, 133, 362, 263) 及輪廓建立變形網格
+        const TRIANGLES = [
+            // Mouth Mesh
+            [78, 13, 312], [78, 312, 308], [78, 14, 308], [78, 0, 13], [308, 13, 0],
+            [78, 17, 14], [308, 14, 17], [61, 185, 40], [291, 405, 270],
+            // Face & Jaw Mesh
+            [10, 338, 297], [10, 109, 67], [10, 67, 338], [152, 148, 176], [152, 377, 400],
+            [176, 148, 152], [400, 377, 152], [58, 132, 172], [288, 361, 397],
+            // Eyes
+            [33, 133, 159], [33, 145, 133], [362, 263, 386], [362, 374, 263]
+        ];
+
+        async function initFaceLandmarker() {
+            try {
+                const { FaceLandmarker, FilesetResolver } = window.vision;
+                const filesetResolver = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/v0.10.0/wasm"
+                );
+                faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                    baseOptions: {
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                        delegate: "GPU"
+                    },
+                    runningMode: "VIDEO",
+                    numFaces: 1,
+                    outputFaceBlendshapes: true
+                });
+            } catch (e) {
+                console.log("MediaPipe 模型初始化備用方案");
+            }
+        }
+
+        async function initCamera() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
+            setMode(currentMode);
+            setColorTheme(colorTheme);
+
+            try {
+                currentStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: facingMode },
+                    audio: false
+                });
+                video.srcObject = currentStream;
+                await video.play();
+                
+                requestAnimationFrame(processFrame);
+            } catch (err) {
+                console.error(err);
+                alert("無法存取攝影機。");
+            }
+        }
+
+        function switchCamera() {
+            switchCount++;
+            
+            if (switchCount % 3 === 0) {
+                isAlternateMode = true;
+                document.getElementById('mainTitle').classList.add('alternate-mode');
+                asciiStamp.classList.add('glitch');
+            } else {
+                isAlternateMode = false;
+                document.getElementById('mainTitle').classList.remove('alternate-mode');
+                asciiStamp.classList.remove('glitch');
+                facingMode = (facingMode === 'user') ? 'environment' : 'user';
+                initCamera();
+            }
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.getElementById('btnAscii').classList.toggle('active', mode === 'ascii');
+            document.getElementById('btnPixel').classList.toggle('active', mode === 'pixel');
+
+            if (mode === 'ascii') {
+                asciiWrapper.style.display = 'block';
+                pixelCanvas.style.display = 'none';
+            } else {
+                asciiWrapper.style.display = 'none';
+                pixelCanvas.style.display = 'block';
+            }
+        }
+
+        function setColorTheme(theme) {
+            colorTheme = theme;
+            document.getElementById('btnGreen').classList.toggle('active', theme === 'green');
+            document.getElementById('btnMono').classList.toggle('active', theme === 'mono');
+            document.getElementById('btnColor').classList.toggle('active', theme === 'color');
+
+            if (theme === 'green') {
+                asciiOutput.style.color = '#00ff66';
+            } else if (theme === 'mono') {
+                asciiOutput.style.color = '#e0e0e0';
+            }
+        }
+
+        // 異步獨立推理，不卡 60FPS 繪製主線程
+        async function runFaceDetection() {
+            if (!faceLandmarker || video.paused || video.ended || isDetecting) return;
+            isDetecting = true;
+
+            try {
+                const results = faceLandmarker.detectForVideo(video, performance.now());
+                if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                    const rawLM = results.faceLandmarks[0];
+
+                    if (!smoothedLandmarks) {
+                        smoothedLandmarks = rawLM.map(p => ({ x: p.x, y: p.y, z: p.z }));
+                    } else {
+                        // Temporal Exponential Smoothing (EMA = 0.2) 消除瞬間缺幀與跳動
+                        for (let i = 0; i < rawLM.length; i++) {
+                            smoothedLandmarks[i].x = smoothedLandmarks[i].x * 0.8 + rawLM[i].x * 0.2;
+                            smoothedLandmarks[i].y = smoothedLandmarks[i].y * 0.8 + rawLM[i].y * 0.2;
+                        }
+                    }
+                }
+            } catch (e) {}
+
+            isDetecting = false;
+        }
+
+        function processFrame() {
+            if (video.paused || video.ended) return;
+
+            const videoAspect = video.videoHeight / video.videoWidth;
+            let cols, rows;
+
+            if (currentMode === 'ascii') {
+                cols = 100;
+                rows = Math.floor(cols * videoAspect * 1.8);
+            } else {
+                cols = 140;
+                rows = Math.floor(cols * videoAspect);
+            }
+
+            hiddenCanvas.width = cols;
+            hiddenCanvas.height = rows;
+
+            hiddenCtx.save();
+            if (facingMode === 'user') {
+                hiddenCtx.scale(-1, 1);
+                hiddenCtx.drawImage(video, -cols, 0, cols, rows);
+            } else {
+                hiddenCtx.drawImage(video, 0, 0, cols, rows);
+            }
+            hiddenCtx.restore();
+
+            // 觸發 AI 異步偵測
+            if (isAlternateMode) {
+                runFaceDetection();
+                applyMeshDeformation(cols, rows);
+            }
+
+            const targetCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
+            const imgData = targetCanvas.getContext('2d').getImageData(0, 0, cols, rows);
+
+            if (currentMode === 'ascii') {
+                renderAscii(imgData.data, cols, rows);
+                updateY2KStampText(asciiStamp);
+            } else {
+                renderPixelArt(imgData.data, cols, rows);
+            }
+
+            requestAnimationFrame(processFrame);
+        }
+
+        // 真正的 468 點 Mesh Deformation (Piecewise Affine Warping)
+        function applyMeshDeformation(cols, rows) {
+            warpCanvas.width = cols;
+            warpCanvas.height = rows;
+
+            warpCtx.clearRect(0, 0, cols, rows);
+            warpCtx.drawImage(hiddenCanvas, 0, 0);
+
+            if (!smoothedLandmarks) return;
+
+            // 1. 複製基礎 Landmarks 座標系
+            const srcPts = smoothedLandmarks.map(p => {
+                const x = (facingMode === 'user') ? (1 - p.x) * cols : p.x * cols;
+                const y = p.y * rows;
+                return { x, y };
+            });
+
+            // 2. 建立偽人形變座標點 (Deformed Destination Points)
+            const dstPts = srcPts.map(p => ({ x: p.x, y: p.y }));
+
+            // 計算張嘴程度 (Upper Lip 13 to Lower Lip 14)
+            const mouthGap = Math.hypot(srcPts[14].x - srcPts[13].x, srcPts[14].y - srcPts[13].y);
+            const mouthOpenFactor = Math.max(1.0, mouthGap * 0.15);
+
+            // 【偽人骨骼撕裂】
+            // 嘴角 (78 左, 308 右) 向左右爆發性撕裂
+            dstPts[78].x -= 18 * mouthOpenFactor;
+            dstPts[308].x += 18 * mouthOpenFactor;
+
+            // 下唇與下巴 (14, 17, 152) 往下劇烈拉長
+            dstPts[14].y += 22 * mouthOpenFactor;
+            dstPts[17].y += 25 * mouthOpenFactor;
+            dstPts[152].y += 18;
+
+            // 眼睛 (33, 133, 362, 263) 縱向拉尖垂直開合
+            dstPts[159].y -= 6;
+            dstPts[145].y += 6;
+            dstPts[386].y -= 6;
+            dstPts[374].y += 6;
+
+            // 3. 逐三角形繪製仿射變換網格 (Affine Mesh Deformation)
+            TRIANGLES.forEach(tri => {
+                drawWarpedTriangle(
+                    hiddenCtx, warpCtx,
+                    [srcPts[tri[0]], srcPts[tri[1]], srcPts[tri[2]]],
+                    [dstPts[tri[0]], dstPts[tri[1]], dstPts[tri[2]]]
+                );
+            });
+        }
+
+        // 三角形仿射變換渲染器 (Piecewise Affine Renderer)
+        function drawWarpedTriangle(srcCtx, dstCtx, src, dst) {
+            dstCtx.save();
+            dstCtx.beginPath();
+            dstCtx.moveTo(dst[0].x, dst[0].y);
+            dstCtx.lineTo(dst[1].x, dst[1].y);
+            dstCtx.lineTo(dst[2].x, dst[2].y);
+            dstCtx.closePath();
+            dstCtx.clip();
+
+            // 計算仿射矩陣 (Affine Transformation Matrix)
+            const den = (src[0].x * (src[1].y - src[2].y) - src[0].y * (src[1].x - src[2].x) + src[1].x * src[2].y - src[1].y * src[2].x);
+            if (Math.abs(den) < 0.001) { dstCtx.restore(); return; }
+
+            const m11 = (dst[0].x * (src[1].y - src[2].y) - dst[0].y * (src[1].x - src[2].x) + dst[1].x * src[2].y - dst[1].y * src[2].x) / den;
+            const m12 = (src[0].x * (dst[1].x - dst[2].x) - src[0].y * (dst[1].y - dst[2].y) + src[1].x * dst[2].x - src[1].y * dst[2].y) / den;
+            const m21 = (dst[0].y * (src[1].y - src[2].y) - dst[0].x * (src[1].x - src[2].x) + dst[1].y * src[2].y - dst[1].x * src[2].x) / den;
+            const m22 = (src[0].x * (dst[1].y - dst[2].y) - src[0].y * (dst[1].x - dst[2].x) + src[1].x * dst[2].y - src[1].y * dst[2].x) / den;
+
+            const dx = dst[0].x - m11 * src[0].x - m12 * src[0].y;
+            const dy = dst[0].y - m21 * src[0].x - m22 * src[0].y;
+
+            dstCtx.transform(m11, m21, m12, m22, dx, dy);
+            dstCtx.drawImage(srcCtx.canvas, 0, 0);
+            dstCtx.restore();
+        }
+
+        function renderAscii(pixels, cols, rows) {
+            if (colorTheme === 'color') {
+                let htmlResult = '';
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        const idx = (y * cols + x) * 4;
+                        const r = pixels[idx];
+                        const g = pixels[idx + 1];
+                        const b = pixels[idx + 2];
+                        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+                        const charIdx = Math.floor((brightness / 255) * (asciiChars.length - 1));
+                        const ch = asciiChars[charIdx] === ' ' ? '&nbsp;' : asciiChars[charIdx];
+                        htmlResult += `<span style="color:rgb(${r},${g},${b})">${ch}</span>`;
+                    }
+                    htmlResult += '<br>';
+                }
+                asciiOutput.innerHTML = htmlResult;
+            } else {
+                let result = '';
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        const idx = (y * cols + x) * 4;
+                        const brightness = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+                        const charIdx = Math.floor((brightness / 255) * (asciiChars.length - 1));
+                        result += asciiChars[charIdx];
+                    }
+                    result += '\n';
+                }
+                asciiOutput.textContent = result;
+            }
+        }
+
+        function renderPixelArt(pixels, cols, rows) {
+            const scale = 4;
+            pixelCanvas.width = cols * scale;
+            pixelCanvas.height = rows * scale;
+
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    const idx = (y * cols + x) * 4;
+                    const r = pixels[idx];
+                    const g = pixels[idx + 1];
+                    const b = pixels[idx + 2];
+
+                    if (colorTheme === 'color') {
+                        const qr = Math.floor(r / 64) * 85;
+                        const qg = Math.floor(g / 64) * 85;
+                        const qb = Math.floor(b / 64) * 85;
+                        pixelCtx.fillStyle = `rgb(${qr},${qg},${qb})`;
+                    } else {
+                        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+                        const colorIdx = Math.floor((brightness / 255) * 3.99);
+                        const palette = (colorTheme === 'green') ? gbPalette : monoPalette;
+                        const [pr, pg, pb] = palette[colorIdx];
+                        pixelCtx.fillStyle = `rgb(${pr},${pg},${pb})`;
+                    }
+
+                    pixelCtx.fillRect(x * scale, y * scale, scale, scale);
+                }
+            }
+
+            drawY2KStampOnCanvas(pixelCtx, pixelCanvas.width, pixelCanvas.height);
+        }
+
+        function getY2KTimeString() {
+            if (isAlternateMode) {
+                const glitchArr = ["'99 12 31  23:59", "'66 06 06  06:66", "'?? ?? ??  ??:??", "'99 99 99  99:99"];
+                if (Math.random() < 0.3) {
+                    return glitchArr[Math.floor(Math.random() * glitchArr.length)];
+                }
+                return `'${Math.floor(Math.random()*90+10)} ${Math.floor(Math.random()*90+10)} ${Math.floor(Math.random()*90+10)}  ${Math.floor(Math.random()*90+10)}:${Math.floor(Math.random()*90+10)}`;
+            }
+
+            const now = new Date();
+            const year = String(now.getFullYear()).slice(-2);
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const mins = String(now.getMinutes()).padStart(2, '0');
+            return `'${year} ${month} ${day}  ${hours}:${mins}`;
+        }
+
+        function updateY2KStampText(element) {
+            element.textContent = getY2KTimeString();
+        }
+
+        function drawY2KStampOnCanvas(ctx, width, height) {
+            ctx.font = 'bold 16px "Courier New", monospace';
+            ctx.fillStyle = isAlternateMode ? '#ff0033' : '#ff8c00';
+            ctx.textAlign = 'right';
+            ctx.shadowColor = 'rgba(0,0,0,0.8)';
+            ctx.shadowBlur = 4;
+            ctx.fillText(getY2KTimeString(), width - 15, height - 12);
+            ctx.shadowBlur = 0;
+        }
+
+        function takeSnapshot() {
+            const previewBox = document.getElementById('previewBox');
+            previewBox.classList.add('flash');
+            setTimeout(() => previewBox.classList.remove('flash'), 200);
+
+            let dataUrl = '';
+
+            if (currentMode === 'ascii') {
+                const saveCanvas = document.createElement('canvas');
+                const saveCtx = saveCanvas.getContext('2d');
+
+                const cols = hiddenCanvas.width;
+                const rows = hiddenCanvas.height;
+                
+                const charWidth = 6;
+                const lineHeight = 3.6;
+                const pad = 15;
+
+                saveCanvas.width = cols * charWidth + (pad * 2);
+                saveCanvas.height = rows * lineHeight + (pad * 2);
+
+                saveCtx.fillStyle = '#000000';
+                saveCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
+                saveCtx.font = 'bold 7px "Courier New", monospace';
+
+                const targetCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
+                const imgData = targetCanvas.getContext('2d').getImageData(0, 0, cols, rows);
+                const pixels = imgData.data;
+
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        const idx = (y * cols + x) * 4;
+                        const r = pixels[idx];
+                        const g = pixels[idx + 1];
+                        const b = pixels[idx + 2];
+                        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+                        const charIdx = Math.floor((brightness / 255) * (asciiChars.length - 1));
+                        const ch = asciiChars[charIdx];
+
+                        if (colorTheme === 'color') {
+                            saveCtx.fillStyle = `rgb(${r},${g},${b})`;
+                        } else if (colorTheme === 'green') {
+                            saveCtx.fillStyle = '#00ff66';
+                        } else {
+                            saveCtx.fillStyle = '#e0e0e0';
+                        }
+
+                        saveCtx.fillText(ch, pad + (x * charWidth), pad + (y * lineHeight));
+                    }
+                }
+
+                drawY2KStampOnCanvas(saveCtx, saveCanvas.width, saveCanvas.height);
+                dataUrl = saveCanvas.toDataURL('image/png');
+            } else {
+                dataUrl = pixelCanvas.toDataURL('image/png');
+            }
+
+            document.getElementById('photoResult').src = dataUrl;
+            document.getElementById('photoModal').classList.add('show');
+        }
+
+        function closeModal() {
+            document.getElementById('photoModal').classList.remove('show');
+        }
+
+        initFaceLandmarker();
+        initCamera();
+    </script>
+</body>
+</html>
