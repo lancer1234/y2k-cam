@@ -26,14 +26,14 @@
 
         #webcam, #hiddenCanvas { display: none; }
 
-        /* 預覽容器：限制手機螢幕比例 */
+        /* 預覽容器：動態自適應 */
         .preview-box {
             position: relative;
             border: 2px solid #333; border-radius: 8px;
             overflow: hidden; background: #000;
             box-shadow: 0 10px 30px rgba(0,0,0,0.8);
             display: flex; justify-content: center; align-items: center;
-            max-width: 100%; max-height: 60vh;
+            max-width: 100%; max-height: 65vh;
         }
 
         /* ASCII 畫面區域 */
@@ -42,20 +42,20 @@
             background: #000;
             padding: 10px;
             display: block;
+            max-height: 65vh;
+            overflow: hidden;
         }
 
         #asciiOutput {
             font-family: "Courier New", Courier, monospace;
             white-space: pre; 
-            line-height: 0.6; 
-            font-size: 6px; 
+            line-height: 0.55; 
+            font-size: 7px; 
             letter-spacing: 0px; 
-            color: #00ff66; /* 動態控制顏色 */
             margin: 0; 
             font-weight: bold; 
             user-select: none;
             text-align: center;
-            transition: color 0.3s ease;
         }
 
         /* Y2K 時間戳記 */
@@ -71,18 +71,18 @@
             pointer-events: none;
         }
 
-        /* Canvas 畫布 (像素模式) */
+        /* Canvas 畫布 (像素模式與 ASCII 彩色渲染) */
         #pixelCanvas {
             display: none;
             max-width: 100%;
-            max-height: 60vh;
+            max-height: 65vh;
             object-fit: contain;
             image-rendering: pixelated;
         }
 
         /* 控制面板 */
         .controls {
-            margin-top: 15px; display: flex; gap: 8px;
+            margin-top: 15px; display: flex; gap: 6px;
             flex-wrap: wrap; justify-content: center; align-items: center;
             width: 100%;
         }
@@ -125,7 +125,6 @@
             padding: 8px 20px; border-radius: 4px; cursor: pointer;
         }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
 <body>
 
@@ -153,6 +152,7 @@
             <!-- 色彩切換 -->
             <button class="btn active" id="btnGreen" onclick="setColorTheme('green')">經典綠</button>
             <button class="btn" id="btnMono" onclick="setColorTheme('mono')">黑白灰階</button>
+            <button class="btn" id="btnColor" onclick="setColorTheme('color')">彩色</button>
             
             <div class="divider"></div>
 
@@ -181,13 +181,12 @@
         const pixelCtx = pixelCanvas.getContext('2d');
 
         let currentMode = 'ascii';   // 'ascii' 或 'pixel'
-        let colorTheme = 'green';    // 'green' 或 'mono'
+        let colorTheme = 'green';    // 'green', 'mono', 或 'color'
         let facingMode = 'user';     // 'user' 或 'environment'
         let currentStream = null;
 
         const asciiChars = ' .`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
         
-        // GameBoy 綠色盤 vs 黑白灰階調色盤
         const gbPalette = [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]];
         const monoPalette = [[10, 10, 10], [80, 80, 80], [160, 160, 160], [240, 240, 240]];
 
@@ -234,20 +233,24 @@
             colorTheme = theme;
             document.getElementById('btnGreen').classList.toggle('active', theme === 'green');
             document.getElementById('btnMono').classList.toggle('active', theme === 'mono');
+            document.getElementById('btnColor').classList.toggle('active', theme === 'color');
 
-            // ASCII 模式下動態改字體顏色
-            asciiOutput.style.color = (theme === 'green') ? '#00ff66' : '#e0e0e0';
+            if (theme === 'green') {
+                asciiOutput.style.color = '#00ff66';
+            } else if (theme === 'mono') {
+                asciiOutput.style.color = '#e0e0e0';
+            }
+            // color 模式下的顏色會由 JS 逐字或畫布動態渲染
         }
 
         function processFrame() {
             if (video.paused || video.ended) return;
 
-            const isPortrait = video.videoHeight > video.videoWidth;
             const videoAspect = video.videoHeight / video.videoWidth;
 
             if (currentMode === 'ascii') {
-                const cols = isPortrait ? 70 : 110;
-                const rows = Math.min(90, Math.floor(cols * videoAspect * 0.75));
+                const cols = 100;
+                const rows = Math.floor(cols * videoAspect * 1.8);
 
                 hiddenCanvas.width = cols;
                 hiddenCanvas.height = rows;
@@ -265,7 +268,7 @@
                 renderAscii(imgData.data, cols, rows);
                 updateY2KStampText(asciiStamp);
             } else {
-                const cols = isPortrait ? 100 : 150;
+                const cols = 140;
                 const rows = Math.floor(cols * videoAspect);
 
                 hiddenCanvas.width = cols;
@@ -281,28 +284,46 @@
                 hiddenCtx.restore();
 
                 const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
-                const palette = (colorTheme === 'green') ? gbPalette : monoPalette;
-                renderPixelArt(imgData.data, cols, rows, palette);
+                renderPixelArt(imgData.data, cols, rows);
             }
 
             requestAnimationFrame(processFrame);
         }
 
         function renderAscii(pixels, cols, rows) {
-            let result = '';
-            for (let y = 0; y < rows; y++) {
-                for (let x = 0; x < cols; x++) {
-                    const idx = (y * cols + x) * 4;
-                    const brightness = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
-                    const charIdx = Math.floor((brightness / 255) * (asciiChars.length - 1));
-                    result += asciiChars[charIdx];
+            if (colorTheme === 'color') {
+                // 彩色 ASCII：使用 HTML span 渲染或繪製
+                let htmlResult = '';
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        const idx = (y * cols + x) * 4;
+                        const r = pixels[idx];
+                        const g = pixels[idx + 1];
+                        const b = pixels[idx + 2];
+                        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+                        const charIdx = Math.floor((brightness / 255) * (asciiChars.length - 1));
+                        const ch = asciiChars[charIdx] === ' ' ? '&nbsp;' : asciiChars[charIdx];
+                        htmlResult += `<span style="color:rgb(${r},${g},${b})">${ch}</span>`;
+                    }
+                    htmlResult += '<br>';
                 }
-                result += '\n';
+                asciiOutput.innerHTML = htmlResult;
+            } else {
+                let result = '';
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        const idx = (y * cols + x) * 4;
+                        const brightness = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+                        const charIdx = Math.floor((brightness / 255) * (asciiChars.length - 1));
+                        result += asciiChars[charIdx];
+                    }
+                    result += '\n';
+                }
+                asciiOutput.textContent = result;
             }
-            asciiOutput.textContent = result;
         }
 
-        function renderPixelArt(pixels, cols, rows, palette) {
+        function renderPixelArt(pixels, cols, rows) {
             const scale = 4;
             pixelCanvas.width = cols * scale;
             pixelCanvas.height = rows * scale;
@@ -310,11 +331,24 @@
             for (let y = 0; y < rows; y++) {
                 for (let x = 0; x < cols; x++) {
                     const idx = (y * cols + x) * 4;
-                    const brightness = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
-                    const colorIdx = Math.floor((brightness / 255) * 3.99);
-                    const [r, g, b] = palette[colorIdx];
+                    const r = pixels[idx];
+                    const g = pixels[idx + 1];
+                    const b = pixels[idx + 2];
 
-                    pixelCtx.fillStyle = `rgb(${r},${g},${b})`;
+                    if (colorTheme === 'color') {
+                        // 量化彩色 (Quantized RGB for Retro 8-bit Feel)
+                        const qr = Math.floor(r / 64) * 85;
+                        const qg = Math.floor(g / 64) * 85;
+                        const qb = Math.floor(b / 64) * 85;
+                        pixelCtx.fillStyle = `rgb(${qr},${qg},${qb})`;
+                    } else {
+                        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+                        const colorIdx = Math.floor((brightness / 255) * 3.99);
+                        const palette = (colorTheme === 'green') ? gbPalette : monoPalette;
+                        const [pr, pg, pb] = palette[colorIdx];
+                        pixelCtx.fillStyle = `rgb(${pr},${pg},${pb})`;
+                    }
+
                     pixelCtx.fillRect(x * scale, y * scale, scale, scale);
                 }
             }
@@ -346,7 +380,7 @@
             ctx.shadowBlur = 0;
         }
 
-        async function takeSnapshot() {
+        function takeSnapshot() {
             const previewBox = document.getElementById('previewBox');
             previewBox.classList.add('flash');
             setTimeout(() => previewBox.classList.remove('flash'), 200);
@@ -354,11 +388,49 @@
             let dataUrl = '';
 
             if (currentMode === 'ascii') {
-                const canvas = await html2canvas(asciiWrapper, {
-                    backgroundColor: '#000000',
-                    scale: 2
-                });
-                dataUrl = canvas.toDataURL('image/png');
+                const saveCanvas = document.createElement('canvas');
+                const saveCtx = saveCanvas.getContext('2d');
+
+                const cols = hiddenCanvas.width;
+                const rows = hiddenCanvas.height;
+                const charWidth = 6;
+                const lineHeight = 7;
+                const pad = 20;
+
+                saveCanvas.width = cols * charWidth + (pad * 2);
+                saveCanvas.height = rows * lineHeight + (pad * 2);
+
+                saveCtx.fillStyle = '#000000';
+                saveCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
+                saveCtx.font = 'bold 8px "Courier New", monospace';
+
+                const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
+                const pixels = imgData.data;
+
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        const idx = (y * cols + x) * 4;
+                        const r = pixels[idx];
+                        const g = pixels[idx + 1];
+                        const b = pixels[idx + 2];
+                        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+                        const charIdx = Math.floor((brightness / 255) * (asciiChars.length - 1));
+                        const ch = asciiChars[charIdx];
+
+                        if (colorTheme === 'color') {
+                            saveCtx.fillStyle = `rgb(${r},${g},${b})`;
+                        } else if (colorTheme === 'green') {
+                            saveCtx.fillStyle = '#00ff66';
+                        } else {
+                            saveCtx.fillStyle = '#e0e0e0';
+                        }
+
+                        saveCtx.fillText(ch, pad + (x * charWidth), pad + (y * lineHeight));
+                    }
+                }
+
+                drawY2KStampOnCanvas(saveCtx, saveCanvas.width, saveCanvas.height);
+                dataUrl = saveCanvas.toDataURL('image/png');
             } else {
                 dataUrl = pixelCanvas.toDataURL('image/png');
             }
