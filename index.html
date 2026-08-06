@@ -250,11 +250,11 @@
             }
         }
 
-        // 核心切換鏡頭邏輯（每滿 3 次觸發偽人彩蛋）
+        // 核心切換鏡頭邏輯（每滿 4 次觸發偽人彩蛋）
         function switchCamera() {
             switchCount++;
             
-            if (switchCount % 3 === 0) {
+            if (switchCount % 4 === 0) {
                 // 觸發偽人模式
                 isAlternateMode = true;
                 document.getElementById('mainTitle').classList.add('alternate-mode');
