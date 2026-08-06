@@ -152,7 +152,7 @@
             <!-- 色彩切換 -->
             <button class="btn active" id="btnGreen" onclick="setColorTheme('green')">經典綠</button>
             <button class="btn" id="btnMono" onclick="setColorTheme('mono')">黑白灰階</button>
-            <button class="btn" id="btnColor" onclick="setColorTheme('color')">彩色</button>
+            <button class="btn" id="btnColor" onclick="setColorTheme('color')">真實色彩</button>
             
             <div class="divider"></div>
 
@@ -240,7 +240,6 @@
             } else if (theme === 'mono') {
                 asciiOutput.style.color = '#e0e0e0';
             }
-            // color 模式下的顏色會由 JS 逐字或畫布動態渲染
         }
 
         function processFrame() {
@@ -292,7 +291,6 @@
 
         function renderAscii(pixels, cols, rows) {
             if (colorTheme === 'color') {
-                // 彩色 ASCII：使用 HTML span 渲染或繪製
                 let htmlResult = '';
                 for (let y = 0; y < rows; y++) {
                     for (let x = 0; x < cols; x++) {
@@ -336,7 +334,6 @@
                     const b = pixels[idx + 2];
 
                     if (colorTheme === 'color') {
-                        // 量化彩色 (Quantized RGB for Retro 8-bit Feel)
                         const qr = Math.floor(r / 64) * 85;
                         const qg = Math.floor(g / 64) * 85;
                         const qb = Math.floor(b / 64) * 85;
@@ -393,16 +390,18 @@
 
                 const cols = hiddenCanvas.width;
                 const rows = hiddenCanvas.height;
+                
+                // 修正行高 (lineHeight = 3.6)，貼合網頁 line-height: 0.55 的比例，防止拉長變形
                 const charWidth = 6;
-                const lineHeight = 7;
-                const pad = 20;
+                const lineHeight = 3.6; 
+                const pad = 15;
 
                 saveCanvas.width = cols * charWidth + (pad * 2);
                 saveCanvas.height = rows * lineHeight + (pad * 2);
 
                 saveCtx.fillStyle = '#000000';
                 saveCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
-                saveCtx.font = 'bold 8px "Courier New", monospace';
+                saveCtx.font = 'bold 7px "Courier New", monospace';
 
                 const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
                 const pixels = imgData.data;
