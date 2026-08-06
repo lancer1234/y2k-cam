@@ -197,10 +197,27 @@
         let switchCount = 0;
         let isAlternateMode = false;
         let faceLandmarker = null;
+        
+        // 陣列化平滑記憶（Exponential Moving Average）
+        let smoothedLandmarks = null;
+        let isDetecting = false;
 
         const asciiChars = ' .`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
         const gbPalette = [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]];
         const monoPalette = [[10, 10, 10], [80, 80, 80], [160, 160, 160], [240, 240, 240]];
+
+        // MediaPipe 468 點基本三角面片拓撲 (Simplistic Triangulation Mesh)
+        // 針對 嘴部 (78, 308, 13, 14, 0, 17)、眼睛 (33, 133, 362, 263) 及輪廓建立變形網格
+        const TRIANGLES = [
+            // Mouth Mesh
+            [78, 13, 312], [78, 312, 308], [78, 14, 308], [78, 0, 13], [308, 13, 0],
+            [78, 17, 14], [308, 14, 17], [61, 185, 40], [291, 405, 270],
+            // Face & Jaw Mesh
+            [10, 338, 297], [10, 109, 67], [10, 67, 338], [152, 148, 176], [152, 377, 400],
+            [176, 148, 152], [400, 377, 152], [58, 132, 172], [288, 361, 397],
+            // Eyes
+            [33, 133, 159], [33, 145, 133], [362, 263, 386], [362, 374, 263]
+        ];
 
         async function initFaceLandmarker() {
             try {
@@ -214,10 +231,11 @@
                         delegate: "GPU"
                     },
                     runningMode: "VIDEO",
-                    numFaces: 1
+                    numFaces: 1,
+                    outputFaceBlendshapes: true
                 });
             } catch (e) {
-                console.log("MediaPipe 模型載入備用模式");
+                console.log("MediaPipe 模型初始化備用方案");
             }
         }
 
@@ -287,6 +305,31 @@
             }
         }
 
+        // 異步獨立推理，不卡 60FPS 繪製主線程
+        async function runFaceDetection() {
+            if (!faceLandmarker || video.paused || video.ended || isDetecting) return;
+            isDetecting = true;
+
+            try {
+                const results = faceLandmarker.detectForVideo(video, performance.now());
+                if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                    const rawLM = results.faceLandmarks[0];
+
+                    if (!smoothedLandmarks) {
+                        smoothedLandmarks = rawLM.map(p => ({ x: p.x, y: p.y, z: p.z }));
+                    } else {
+                        // Temporal Exponential Smoothing (EMA = 0.2) 消除瞬間缺幀與跳動
+                        for (let i = 0; i < rawLM.length; i++) {
+                            smoothedLandmarks[i].x = smoothedLandmarks[i].x * 0.8 + rawLM[i].x * 0.2;
+                            smoothedLandmarks[i].y = smoothedLandmarks[i].y * 0.8 + rawLM[i].y * 0.2;
+                        }
+                    }
+                }
+            } catch (e) {}
+
+            isDetecting = false;
+        }
+
         function processFrame() {
             if (video.paused || video.ended) return;
 
@@ -313,12 +356,12 @@
             }
             hiddenCtx.restore();
 
-            // 執行偽人扭曲算子
+            // 觸發 AI 異步偵測
             if (isAlternateMode) {
-                detectAndWarpFace(cols, rows);
+                runFaceDetection();
+                applyMeshDeformation(cols, rows);
             }
 
-            // 關鍵修復：不管是 ASCII 還是 Pixel，偽人模式時都讀取 warpCanvas！
             const targetCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
             const imgData = targetCanvas.getContext('2d').getImageData(0, 0, cols, rows);
 
@@ -332,92 +375,81 @@
             requestAnimationFrame(processFrame);
         }
 
-        // 精確嘴巴鎖定與極端拉扯演算法
-        function detectAndWarpFace(cols, rows) {
+        // 真正的 468 點 Mesh Deformation (Piecewise Affine Warping)
+        function applyMeshDeformation(cols, rows) {
             warpCanvas.width = cols;
             warpCanvas.height = rows;
 
-            let mouthX = cols * 0.5;
-            let mouthY = rows * 0.68; // 往下移至嘴巴預測區
+            warpCtx.clearRect(0, 0, cols, rows);
+            warpCtx.drawImage(hiddenCanvas, 0, 0);
 
-            // 1. 優先使用 AI 人臉關鍵點
-            let aiFound = false;
-            if (faceLandmarker && video.currentTime > 0) {
-                try {
-                    const results = faceLandmarker.detectForVideo(video, performance.now());
-                    if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-                        const lm = results.faceLandmarks[0][14]; // 下唇點
-                        mouthX = (facingMode === 'user') ? (1 - lm.x) * cols : lm.x * cols;
-                        mouthY = lm.y * rows;
-                        aiFound = true;
-                    }
-                } catch(e){}
-            }
+            if (!smoothedLandmarks) return;
 
-            // 2. 若 AI 未捕捉，啟動動態暗色嘴腔區塊掃描
-            const srcData = hiddenCtx.getImageData(0, 0, cols, rows);
-            const pixels = srcData.data;
+            // 1. 複製基礎 Landmarks 座標系
+            const srcPts = smoothedLandmarks.map(p => {
+                const x = (facingMode === 'user') ? (1 - p.x) * cols : p.x * cols;
+                const y = p.y * rows;
+                return { x, y };
+            });
 
-            if (!aiFound) {
-                let darkSumX = 0, darkSumY = 0, darkCount = 0;
-                // 在下半臉區域搜尋張開嘴巴的深色像素
-                for (let y = Math.floor(rows * 0.5); y < Math.floor(rows * 0.85); y++) {
-                    for (let x = Math.floor(cols * 0.25); x < Math.floor(cols * 0.75); x++) {
-                        const idx = (y * cols + x) * 4;
-                        const brightness = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
-                        if (brightness < 50) { // 暗部/嘴腔
-                            darkSumX += x;
-                            darkSumY += y;
-                            darkCount++;
-                        }
-                    }
-                }
-                if (darkCount > 10) {
-                    mouthX = darkSumX / darkCount;
-                    mouthY = darkSumY / darkCount;
-                }
-            }
+            // 2. 建立偽人形變座標點 (Deformed Destination Points)
+            const dstPts = srcPts.map(p => ({ x: p.x, y: p.y }));
 
-            // 3. 執行「撕裂裂嘴笑」與「極端往下伸長」像素位移
-            const dstData = warpCtx.createImageData(cols, rows);
+            // 計算張嘴程度 (Upper Lip 13 to Lower Lip 14)
+            const mouthGap = Math.hypot(srcPts[14].x - srcPts[13].x, srcPts[14].y - srcPts[13].y);
+            const mouthOpenFactor = Math.max(1.0, mouthGap * 0.15);
 
-            for (let y = 0; y < rows; y++) {
-                for (let x = 0; x < cols; x++) {
-                    let dx = x - mouthX;
-                    let dy = y - mouthY;
-                    let dist = Math.sqrt(dx * dx + dy * dy);
+            // 【偽人骨骼撕裂】
+            // 嘴角 (78 左, 308 右) 向左右爆發性撕裂
+            dstPts[78].x -= 18 * mouthOpenFactor;
+            dstPts[308].x += 18 * mouthOpenFactor;
 
-                    let srcX = x;
-                    let srcY = y;
+            // 下唇與下巴 (14, 17, 152) 往下劇烈拉長
+            dstPts[14].y += 22 * mouthOpenFactor;
+            dstPts[17].y += 25 * mouthOpenFactor;
+            dstPts[152].y += 18;
 
-                    const radius = cols * 0.35; // 動態作用半徑
-                    if (dist < radius) {
-                        let factor = Math.pow((1 - dist / radius), 1.8);
-                        
-                        // 強制嘴唇向下爆發拉長 (Vertical Stretch)
-                        if (dy > 0) {
-                            srcY -= dy * factor * 2.2;
-                        } else {
-                            srcY -= dy * factor * 0.8;
-                        }
+            // 眼睛 (33, 133, 362, 263) 縱向拉尖垂直開合
+            dstPts[159].y -= 6;
+            dstPts[145].y += 6;
+            dstPts[386].y -= 6;
+            dstPts[374].y += 6;
 
-                        // 嘴角向左右極端撕裂 (Horizontal Tear)
-                        srcX -= Math.sign(dx) * Math.pow(Math.abs(dx), 0.6) * factor * 3.5;
-                    }
+            // 3. 逐三角形繪製仿射變換網格 (Affine Mesh Deformation)
+            TRIANGLES.forEach(tri => {
+                drawWarpedTriangle(
+                    hiddenCtx, warpCtx,
+                    [srcPts[tri[0]], srcPts[tri[1]], srcPts[tri[2]]],
+                    [dstPts[tri[0]], dstPts[tri[1]], dstPts[tri[2]]]
+                );
+            });
+        }
 
-                    srcX = Math.max(0, Math.min(cols - 1, Math.floor(srcX)));
-                    srcY = Math.max(0, Math.min(rows - 1, Math.floor(srcY)));
+        // 三角形仿射變換渲染器 (Piecewise Affine Renderer)
+        function drawWarpedTriangle(srcCtx, dstCtx, src, dst) {
+            dstCtx.save();
+            dstCtx.beginPath();
+            dstCtx.moveTo(dst[0].x, dst[0].y);
+            dstCtx.lineTo(dst[1].x, dst[1].y);
+            dstCtx.lineTo(dst[2].x, dst[2].y);
+            dstCtx.closePath();
+            dstCtx.clip();
 
-                    const srcIdx = (srcY * cols + srcX) * 4;
-                    const dstIdx = (y * cols + x) * 4;
+            // 計算仿射矩陣 (Affine Transformation Matrix)
+            const den = (src[0].x * (src[1].y - src[2].y) - src[0].y * (src[1].x - src[2].x) + src[1].x * src[2].y - src[1].y * src[2].x);
+            if (Math.abs(den) < 0.001) { dstCtx.restore(); return; }
 
-                    dstData.data[dstIdx] = pixels[srcIdx];
-                    dstData.data[dstIdx + 1] = pixels[srcIdx + 1];
-                    dstData.data[dstIdx + 2] = pixels[srcIdx + 2];
-                    dstData.data[dstIdx + 3] = 255;
-                }
-            }
-            warpCtx.putImageData(dstData, 0, 0);
+            const m11 = (dst[0].x * (src[1].y - src[2].y) - dst[0].y * (src[1].x - src[2].x) + dst[1].x * src[2].y - dst[1].y * src[2].x) / den;
+            const m12 = (src[0].x * (dst[1].x - dst[2].x) - src[0].y * (dst[1].y - dst[2].y) + src[1].x * dst[2].x - src[1].y * dst[2].y) / den;
+            const m21 = (dst[0].y * (src[1].y - src[2].y) - dst[0].x * (src[1].x - src[2].x) + dst[1].y * src[2].y - dst[1].x * src[2].x) / den;
+            const m22 = (src[0].x * (dst[1].y - dst[2].y) - src[0].y * (dst[1].x - dst[2].x) + src[1].x * dst[2].y - src[1].y * dst[2].x) / den;
+
+            const dx = dst[0].x - m11 * src[0].x - m12 * src[0].y;
+            const dy = dst[0].y - m21 * src[0].x - m22 * src[0].y;
+
+            dstCtx.transform(m11, m21, m12, m22, dx, dy);
+            dstCtx.drawImage(srcCtx.canvas, 0, 0);
+            dstCtx.restore();
         }
 
         function renderAscii(pixels, cols, rows) {
