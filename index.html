@@ -56,6 +56,8 @@
             font-weight: bold; 
             user-select: none;
             text-align: center;
+            color: #00ff66; /* 預設綠色 */
+            transition: color 0.3s ease;
         }
 
         /* Y2K 時間戳記 */
@@ -152,7 +154,7 @@
             <!-- 色彩切換 -->
             <button class="btn active" id="btnGreen" onclick="setColorTheme('green')">經典綠</button>
             <button class="btn" id="btnMono" onclick="setColorTheme('mono')">黑白灰階</button>
-            <button class="btn" id="btnColor" onclick="setColorTheme('color')">真實色彩</button>
+            <button class="btn" id="btnColor" onclick="setColorTheme('color')">真實彩色</button>
             
             <div class="divider"></div>
 
@@ -194,6 +196,10 @@
             if (currentStream) {
                 currentStream.getTracks().forEach(track => track.stop());
             }
+
+            // 強制初始化預設模式與色彩主題
+            setMode('ascii');
+            setColorTheme('green');
 
             try {
                 currentStream = await navigator.mediaDevices.getUserMedia({
@@ -391,9 +397,8 @@
                 const cols = hiddenCanvas.width;
                 const rows = hiddenCanvas.height;
                 
-                // 修正行高 (lineHeight = 3.6)，貼合網頁 line-height: 0.55 的比例，防止拉長變形
                 const charWidth = 6;
-                const lineHeight = 3.6; 
+                const lineHeight = 3.6; // 配合 line-height: 0.55 的正確拍照壓縮比
                 const pad = 15;
 
                 saveCanvas.width = cols * charWidth + (pad * 2);
