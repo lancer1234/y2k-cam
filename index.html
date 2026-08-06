@@ -22,11 +22,18 @@
         h1 {
             font-size: 1.5rem; font-weight: 600; letter-spacing: 3px;
             margin: 10px 0 15px 0; color: #ff8c00; text-shadow: 0 0 10px rgba(255,140,0,0.5);
+            transition: all 0.3s ease;
         }
 
-        #webcam, #hiddenCanvas { display: none; }
+        /* 偽人模式下的驚悚標題效果 */
+        h1.alternate-mode {
+            color: #ff0033;
+            text-shadow: 0 0 15px rgba(255,0,51,0.8);
+            letter-spacing: 5px;
+        }
 
-        /* 預覽容器：動態自適應 */
+        #webcam, #hiddenCanvas, #warpCanvas { display: none; }
+
         .preview-box {
             position: relative;
             border: 2px solid #333; border-radius: 8px;
@@ -36,7 +43,6 @@
             max-width: 100%; max-height: 65vh;
         }
 
-        /* ASCII 畫面區域 */
         #asciiWrapper {
             position: relative;
             background: #000;
@@ -56,11 +62,10 @@
             font-weight: bold; 
             user-select: none;
             text-align: center;
-            color: #00ff66; /* 預設綠色 */
+            color: #00ff66;
             transition: color 0.3s ease;
         }
 
-        /* Y2K 時間戳記 */
         .timestamp-stamp {
             position: absolute;
             bottom: 12px;
@@ -73,7 +78,12 @@
             pointer-events: none;
         }
 
-        /* Canvas 畫布 (像素模式與 ASCII 彩色渲染) */
+        /* 偽人模式的時間戳記跳動 */
+        .timestamp-stamp.glitch {
+            color: #ff0033;
+            text-shadow: 0 0 8px rgba(255,0,0,0.9);
+        }
+
         #pixelCanvas {
             display: none;
             max-width: 100%;
@@ -82,7 +92,6 @@
             image-rendering: pixelated;
         }
 
-        /* 控制面板 */
         .controls {
             margin-top: 15px; display: flex; gap: 6px;
             flex-wrap: wrap; justify-content: center; align-items: center;
@@ -107,7 +116,6 @@
             100% { opacity: 1; }
         }
 
-        /* 手機存圖 Modal 彈窗 */
         .modal {
             display: none; position: fixed; top: 0; left: 0;
             width: 100vw; height: 100vh; background: rgba(0,0,0,0.9);
@@ -127,14 +135,17 @@
             padding: 8px 20px; border-radius: 4px; cursor: pointer;
         }
     </style>
+    <!-- 引入 Google MediaPipe Face Landmarker 人臉辨識庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/v0.10.0/vision/vision_bundle.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
     <div class="container">
-        <h1>Y2K CAM</h1>
+        <h1 id="mainTitle">Y2K CAM</h1>
 
         <video id="webcam" autoplay playsinline></video>
         <canvas id="hiddenCanvas"></canvas>
+        <canvas id="warpCanvas"></canvas>
 
         <div class="preview-box" id="previewBox">
             <div id="asciiWrapper">
@@ -145,26 +156,22 @@
         </div>
 
         <div class="controls">
-            <!-- 模式切換 -->
             <button class="btn active" id="btnAscii" onclick="setMode('ascii')">ASCII 文字</button>
             <button class="btn" id="btnPixel" onclick="setMode('pixel')">8-bit 像素</button>
             
             <div class="divider"></div>
 
-            <!-- 色彩切換 -->
             <button class="btn active" id="btnGreen" onclick="setColorTheme('green')">經典綠</button>
             <button class="btn" id="btnMono" onclick="setColorTheme('mono')">黑白灰階</button>
             <button class="btn" id="btnColor" onclick="setColorTheme('color')">真實彩色</button>
             
             <div class="divider"></div>
 
-            <!-- 功能按鈕 -->
             <button class="btn" onclick="switchCamera()">🔄 鏡頭</button>
             <button class="btn" onclick="takeSnapshot()" style="border-color: #ff8c00; color: #ff8c00;">📷 儲存照片</button>
         </div>
     </div>
 
-    <!-- 拍照結果 Modal (支援手機長按儲存) -->
     <div class="modal" id="photoModal">
         <img id="photoResult" alt="Snapshot">
         <div class="modal-tip">長按上方圖片即可「儲存至相簿」或分享</div>
@@ -175,6 +182,9 @@
         const video = document.getElementById('webcam');
         const hiddenCanvas = document.getElementById('hiddenCanvas');
         const hiddenCtx = hiddenCanvas.getContext('2d', { willReadFrequently: true });
+
+        const warpCanvas = document.getElementById('warpCanvas');
+        const warpCtx = warpCanvas.getContext('2d', { willReadFrequently: true });
         
         const asciiWrapper = document.getElementById('asciiWrapper');
         const asciiOutput = document.getElementById('asciiOutput');
@@ -182,24 +192,48 @@
         const pixelCanvas = document.getElementById('pixelCanvas');
         const pixelCtx = pixelCanvas.getContext('2d');
 
-        let currentMode = 'ascii';   // 'ascii' 或 'pixel'
-        let colorTheme = 'green';    // 'green', 'mono', 或 'color'
-        let facingMode = 'user';     // 'user' 或 'environment'
+        let currentMode = 'ascii';
+        let colorTheme = 'green';
+        let facingMode = 'user';
         let currentStream = null;
 
+        // 彩蛋控制變數
+        let switchCount = 0;
+        let isAlternateMode = false; // 是否進入「偽人模式」
+        let faceLandmarker = null;
+        let lastFaceLandmarks = null;
+
         const asciiChars = ' .`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
-        
         const gbPalette = [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]];
         const monoPalette = [[10, 10, 10], [80, 80, 80], [160, 160, 160], [240, 240, 240]];
+
+        // 初始化 MediaPipe AI 人臉追蹤
+        async function initFaceLandmarker() {
+            try {
+                const { FaceLandmarker, FilesetResolver } = window.vision;
+                const filesetResolver = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/v0.10.0/wasm"
+                );
+                faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                    baseOptions: {
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
+                        delegate: "GPU"
+                    },
+                    runningMode: "VIDEO",
+                    numFaces: 1
+                });
+            } catch (e) {
+                console.log("MediaPipe AI 模型載入失敗，將退回基礎扭曲演算法", e);
+            }
+        }
 
         async function initCamera() {
             if (currentStream) {
                 currentStream.getTracks().forEach(track => track.stop());
             }
 
-            // 強制初始化預設模式與色彩主題
-            setMode('ascii');
-            setColorTheme('green');
+            setMode(currentMode);
+            setColorTheme(colorTheme);
 
             try {
                 currentStream = await navigator.mediaDevices.getUserMedia({
@@ -212,13 +246,27 @@
                 requestAnimationFrame(processFrame);
             } catch (err) {
                 console.error(err);
-                alert("無法存取攝影機，請檢查權限或換個瀏覽器試試看。");
+                alert("無法存取攝影機，請檢查權限。");
             }
         }
 
+        // 核心切換鏡頭邏輯（每滿 3 次觸發偽人彩蛋）
         function switchCamera() {
-            facingMode = (facingMode === 'user') ? 'environment' : 'user';
-            initCamera();
+            switchCount++;
+            
+            if (switchCount % 3 === 0) {
+                // 觸發偽人模式
+                isAlternateMode = true;
+                document.getElementById('mainTitle').classList.add('alternate-mode');
+                asciiStamp.classList.add('glitch');
+            } else {
+                // 回歸正常模式，切換鏡頭
+                isAlternateMode = false;
+                document.getElementById('mainTitle').classList.remove('alternate-mode');
+                asciiStamp.classList.remove('glitch');
+                facingMode = (facingMode === 'user') ? 'environment' : 'user';
+                initCamera();
+            }
         }
 
         function setMode(mode) {
@@ -252,47 +300,110 @@
             if (video.paused || video.ended) return;
 
             const videoAspect = video.videoHeight / video.videoWidth;
+            let cols, rows;
 
             if (currentMode === 'ascii') {
-                const cols = 100;
-                const rows = Math.floor(cols * videoAspect * 1.8);
+                cols = 100;
+                rows = Math.floor(cols * videoAspect * 1.8);
+            } else {
+                cols = 140;
+                rows = Math.floor(cols * videoAspect);
+            }
 
-                hiddenCanvas.width = cols;
-                hiddenCanvas.height = rows;
+            hiddenCanvas.width = cols;
+            hiddenCanvas.height = rows;
 
-                hiddenCtx.save();
-                if (facingMode === 'user') {
-                    hiddenCtx.scale(-1, 1);
-                    hiddenCtx.drawImage(video, -cols, 0, cols, rows);
-                } else {
-                    hiddenCtx.drawImage(video, 0, 0, cols, rows);
-                }
-                hiddenCtx.restore();
+            hiddenCtx.save();
+            if (facingMode === 'user') {
+                hiddenCtx.scale(-1, 1);
+                hiddenCtx.drawImage(video, -cols, 0, cols, rows);
+            } else {
+                hiddenCtx.drawImage(video, 0, 0, cols, rows);
+            }
+            hiddenCtx.restore();
 
-                const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
+            // 如果是在偽人模式下，進行 AI 人臉識別與扭曲算子
+            if (isAlternateMode) {
+                detectAndWarpFace(cols, rows);
+            }
+
+            const activeCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
+            const imgData = activeCanvas.getContext('2d').getImageData(0, 0, cols, rows);
+
+            if (currentMode === 'ascii') {
                 renderAscii(imgData.data, cols, rows);
                 updateY2KStampText(asciiStamp);
             } else {
-                const cols = 140;
-                const rows = Math.floor(cols * videoAspect);
-
-                hiddenCanvas.width = cols;
-                hiddenCanvas.height = rows;
-
-                hiddenCtx.save();
-                if (facingMode === 'user') {
-                    hiddenCtx.scale(-1, 1);
-                    hiddenCtx.drawImage(video, -cols, 0, cols, rows);
-                } else {
-                    hiddenCtx.drawImage(video, 0, 0, cols, rows);
-                }
-                hiddenCtx.restore();
-
-                const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
                 renderPixelArt(imgData.data, cols, rows);
             }
 
             requestAnimationFrame(processFrame);
+        }
+
+        // 偽人化扭曲演算法：把嘴巴往下與向兩側撕裂
+        function detectAndWarpFace(cols, rows) {
+            warpCanvas.width = cols;
+            warpCanvas.height = rows;
+
+            // 1. 先把原圖畫上準備扭曲
+            warpCtx.drawImage(hiddenCanvas, 0, 0);
+
+            // 2. 進行 MediaPipe AI 人臉檢測
+            if (faceLandmarker && video.currentTime > 0) {
+                try {
+                    const results = faceLandmarker.detectForVideo(video, performance.now());
+                    if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                        lastFaceLandmarks = results.faceLandmarks[0];
+                    }
+                } catch(e){}
+            }
+
+            const srcData = hiddenCtx.getImageData(0, 0, cols, rows);
+            const dstData = warpCtx.createImageData(cols, rows);
+
+            let mouthX = cols * 0.5;
+            let mouthY = rows * 0.65;
+
+            // 如果抓到 AI 人臉點，拿嘴巴的精確座標 (Landmark 13: 上唇, Landmark 14: 下唇)
+            if (lastFaceLandmarks) {
+                const landmarkMouth = lastFaceLandmarks[14];
+                // Selfie 視角需要 X 軸反轉
+                mouthX = (facingMode === 'user') ? (1 - landmarkMouth.x) * cols : landmarkMouth.x * cols;
+                mouthY = landmarkMouth.y * rows;
+            }
+
+            // 3. 網格拉扯變形 (Mouth Distortion Mesh)
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    let dx = x - mouthX;
+                    let dy = y - mouthY;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+
+                    let srcX = x;
+                    let srcY = y;
+
+                    // 在嘴巴周圍 35 像素範圍內施加強烈扭曲
+                    const radius = 35;
+                    if (dist < radius) {
+                        let factor = Math.pow((1 - dist / radius), 2);
+                        // 縱向往下大幅拉扯，橫向向兩端撕裂成恐怖巨笑
+                        srcY -= dy * factor * 1.8;
+                        srcX -= Math.sign(dx) * Math.pow(Math.abs(dx), 0.7) * factor * 2.2;
+                    }
+
+                    srcX = Math.max(0, Math.min(cols - 1, Math.floor(srcX)));
+                    srcY = Math.max(0, Math.min(rows - 1, Math.floor(srcY)));
+
+                    const srcIdx = (srcY * cols + srcX) * 4;
+                    const dstIdx = (y * cols + x) * 4;
+
+                    dstData.data[dstIdx] = srcData.data[srcIdx];
+                    dstData.data[dstIdx + 1] = srcData.data[srcIdx + 1];
+                    dstData.data[dstIdx + 2] = srcData.data[srcIdx + 2];
+                    dstData.data[dstIdx + 3] = 255;
+                }
+            }
+            warpCtx.putImageData(dstData, 0, 0);
         }
 
         function renderAscii(pixels, cols, rows) {
@@ -359,7 +470,17 @@
             drawY2KStampOnCanvas(pixelCtx, pixelCanvas.width, pixelCanvas.height);
         }
 
+        // 亂碼 / 驚悚時間戳記產生器
         function getY2KTimeString() {
+            if (isAlternateMode) {
+                // 亂碼閃爍跳動 (例如 '99 12 31 23:59 或亂碼數字)
+                const glitchArr = ["'99 12 31  23:59", "'66 06 06  06:66", "'?? ?? ??  ??:??", "'99 99 99  99:99"];
+                if (Math.random() < 0.3) {
+                    return glitchArr[Math.floor(Math.random() * glitchArr.length)];
+                }
+                return `'${Math.floor(Math.random()*90+10)} ${Math.floor(Math.random()*90+10)} ${Math.floor(Math.random()*90+10)}  ${Math.floor(Math.random()*90+10)}:${Math.floor(Math.random()*90+10)}`;
+            }
+
             const now = new Date();
             const year = String(now.getFullYear()).slice(-2);
             const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -375,7 +496,7 @@
 
         function drawY2KStampOnCanvas(ctx, width, height) {
             ctx.font = 'bold 16px "Courier New", monospace';
-            ctx.fillStyle = '#ff8c00';
+            ctx.fillStyle = isAlternateMode ? '#ff0033' : '#ff8c00';
             ctx.textAlign = 'right';
             ctx.shadowColor = 'rgba(0,0,0,0.8)';
             ctx.shadowBlur = 4;
@@ -398,7 +519,7 @@
                 const rows = hiddenCanvas.height;
                 
                 const charWidth = 6;
-                const lineHeight = 3.6; // 配合 line-height: 0.55 的正確拍照壓縮比
+                const lineHeight = 3.6;
                 const pad = 15;
 
                 saveCanvas.width = cols * charWidth + (pad * 2);
@@ -408,7 +529,8 @@
                 saveCtx.fillRect(0, 0, saveCanvas.width, saveCanvas.height);
                 saveCtx.font = 'bold 7px "Courier New", monospace';
 
-                const imgData = hiddenCtx.getImageData(0, 0, cols, rows);
+                const activeCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
+                const imgData = activeCanvas.getContext('2d').getImageData(0, 0, cols, rows);
                 const pixels = imgData.data;
 
                 for (let y = 0; y < rows; y++) {
@@ -447,6 +569,7 @@
             document.getElementById('photoModal').classList.remove('show');
         }
 
+        initFaceLandmarker();
         initCamera();
     </script>
 </body>
