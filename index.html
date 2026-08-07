@@ -197,13 +197,12 @@
         let isAlternateMode = false;
         let faceLandmarker = null;
         
-        // 偽人五官定位點 (平滑 EMA)
         let faceParams = {
-            mx: 0.5, my: 0.65, // 嘴巴中心
-            leftX: 0.38, leftY: 0.62, // 左嘴角
-            rightX: 0.62, rightY: 0.62, // 右嘴角
-            leftEyeX: 0.4, leftEyeY: 0.42, // 左眼
-            rightEyeX: 0.6, rightEyeY: 0.42, // 右眼
+            mx: 0.5, my: 0.65,
+            leftX: 0.38, leftY: 0.62,
+            rightX: 0.62, rightY: 0.62,
+            leftEyeX: 0.4, leftEyeY: 0.42,
+            rightEyeX: 0.6, rightEyeY: 0.42,
             openFactor: 1.0
         };
         let isDetecting = false;
@@ -303,10 +302,8 @@
                 const results = faceLandmarker.detectForVideo(video, performance.now());
                 if (results.faceLandmarks && results.faceLandmarks.length > 0) {
                     const lm = results.faceLandmarks[0];
-
                     const getX = (p) => (facingMode === 'user') ? (1 - p.x) : p.x;
 
-                    // 五官關鍵點：13(上唇), 14(下唇), 78(左嘴角), 308(右嘴角), 468/469(雙眼)
                     const mouthX = (getX(lm[13]) + getX(lm[14])) / 2;
                     const mouthY = (lm[13].y + lm[14].y) / 2;
                     
@@ -322,7 +319,6 @@
 
                     const gap = Math.hypot(lm[14].x - lm[13].x, lm[14].y - lm[13].y);
 
-                    // 指數平滑（EMA）防止平移跳動
                     faceParams.mx = faceParams.mx * 0.8 + mouthX * 0.2;
                     faceParams.my = faceParams.my * 0.8 + mouthY * 0.2;
                     faceParams.leftX = faceParams.leftX * 0.8 + lx * 0.2;
@@ -349,8 +345,9 @@
             let cols, rows;
 
             if (currentMode === 'ascii') {
-                cols = 100;
-                rows = Math.floor(cols * videoAspect * 1.8);
+                cols = 90;
+                // 關鍵修復：與 8-bit 模式比例一致，確保相機全景可見，不再有放大的切割感！
+                rows = Math.floor(cols * videoAspect);
             } else {
                 cols = 140;
                 rows = Math.floor(cols * videoAspect);
@@ -386,7 +383,6 @@
             requestAnimationFrame(processFrame);
         }
 
-        // 精準詭異微笑 + 嘴中間向下 + 嘴角向上 + 眼睛放大 + 鎖定輪廓
         function applyCheshireSmileWarp(cols, rows) {
             warpCanvas.width = cols;
             warpCanvas.height = rows;
@@ -418,34 +414,22 @@
                     let srcX = x;
                     let srcY = y;
 
-                    // ----------------------------------------------------
-                    // 1. 嘴巴區域形變（中間向下，嘴角大幅向上彎曲）
-                    // ----------------------------------------------------
                     const dMouthX = x - mx;
                     const dMouthY = y - my;
                     const distMouth = Math.hypot(dMouthX, dMouthY);
 
                     if (distMouth < mouthRadius) {
-                        // 高斯柔和衰減 (Gaussian Decay)，確保不影響臉部外輪廓
                         const w = Math.exp(-Math.pow(distMouth / (mouthRadius * 0.55), 2));
-
-                        // 判斷是接近中間還是接近兩側嘴角 (-1.0 左嘴角 ... 0.0 中間 ... 1.0 右嘴角)
                         const normX = Math.max(-1.0, Math.min(1.0, dMouthX / (mouthWidth * 0.5)));
 
-                        // 核心幾何方程式：中間向下 (0.0 時極大)，嘴角向上 (±1.0 時極大向上)
                         const curveShiftY = (1.2 - 2.8 * Math.pow(normX, 2)) * (mouthWidth * 0.28);
-
                         srcY -= curveShiftY * w;
 
-                        // 嘴角兩側適度向外微拉大笑
                         if (Math.abs(normX) > 0.4) {
                             srcX -= Math.sign(dMouthX) * (mouthWidth * 0.15) * w;
                         }
                     }
 
-                    // ----------------------------------------------------
-                    // 2. 眼睛輕微放大效果（Slight Magnification）
-                    // ----------------------------------------------------
                     const distLeftEye = Math.hypot(x - lex, y - ley);
                     if (distLeftEye < eyeRadius) {
                         const wEye = 0.5 * (1.0 + Math.cos(Math.PI * distLeftEye / eyeRadius));
@@ -460,7 +444,6 @@
                         srcY -= (y - rey) * 0.35 * wEye;
                     }
 
-                    // 座標邊界安全限制
                     srcX = Math.max(0, Math.min(cols - 1, Math.round(srcX)));
                     srcY = Math.max(0, Math.min(rows - 1, Math.round(srcY)));
 
