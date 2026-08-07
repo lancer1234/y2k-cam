@@ -133,7 +133,6 @@
             padding: 8px 20px; border-radius: 4px; cursor: pointer;
         }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/v0.10.0/vision/vision_bundle.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -175,7 +174,10 @@
         <button class="modal-close" onclick="closeModal()">關閉</button>
     </div>
 
-    <script>
+    <!-- 修正：引入穩定安全的 CDN Vision 模組 -->
+    <script type="module">
+        import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
         const video = document.getElementById('webcam');
         const hiddenCanvas = document.getElementById('hiddenCanvas');
         const hiddenCtx = hiddenCanvas.getContext('2d', { willReadFrequently: true });
@@ -198,7 +200,6 @@
         let isAlternateMode = false;
         let faceLandmarker = null;
         
-        // 陣列化平滑記憶（Exponential Moving Average）
         let smoothedLandmarks = null;
         let isDetecting = false;
 
@@ -206,24 +207,19 @@
         const gbPalette = [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]];
         const monoPalette = [[10, 10, 10], [80, 80, 80], [160, 160, 160], [240, 240, 240]];
 
-        // MediaPipe 468 點基本三角面片拓撲 (Simplistic Triangulation Mesh)
-        // 針對 嘴部 (78, 308, 13, 14, 0, 17)、眼睛 (33, 133, 362, 263) 及輪廓建立變形網格
+        // 嘴巴、面部精確拓撲網格
         const TRIANGLES = [
-            // Mouth Mesh
             [78, 13, 312], [78, 312, 308], [78, 14, 308], [78, 0, 13], [308, 13, 0],
             [78, 17, 14], [308, 14, 17], [61, 185, 40], [291, 405, 270],
-            // Face & Jaw Mesh
             [10, 338, 297], [10, 109, 67], [10, 67, 338], [152, 148, 176], [152, 377, 400],
             [176, 148, 152], [400, 377, 152], [58, 132, 172], [288, 361, 397],
-            // Eyes
             [33, 133, 159], [33, 145, 133], [362, 263, 386], [362, 374, 263]
         ];
 
         async function initFaceLandmarker() {
             try {
-                const { FaceLandmarker, FilesetResolver } = window.vision;
                 const filesetResolver = await FilesetResolver.forVisionTasks(
-                    "https://cdn.jsdelivr.net/npm/@mediapipe/v0.10.0/wasm"
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
                 );
                 faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
                     baseOptions: {
@@ -231,11 +227,11 @@
                         delegate: "GPU"
                     },
                     runningMode: "VIDEO",
-                    numFaces: 1,
-                    outputFaceBlendshapes: true
+                    numFaces: 1
                 });
+                console.log("MediaPipe AI Face Landmarker 初始化成功！");
             } catch (e) {
-                console.log("MediaPipe 模型初始化備用方案");
+                console.error("MediaPipe 初始化失敗", e);
             }
         }
 
@@ -262,7 +258,7 @@
             }
         }
 
-        function switchCamera() {
+        window.switchCamera = function() {
             switchCount++;
             
             if (switchCount % 3 === 0) {
@@ -276,9 +272,9 @@
                 facingMode = (facingMode === 'user') ? 'environment' : 'user';
                 initCamera();
             }
-        }
+        };
 
-        function setMode(mode) {
+        window.setMode = function(mode) {
             currentMode = mode;
             document.getElementById('btnAscii').classList.toggle('active', mode === 'ascii');
             document.getElementById('btnPixel').classList.toggle('active', mode === 'pixel');
@@ -290,9 +286,9 @@
                 asciiWrapper.style.display = 'none';
                 pixelCanvas.style.display = 'block';
             }
-        }
+        };
 
-        function setColorTheme(theme) {
+        window.setColorTheme = function(theme) {
             colorTheme = theme;
             document.getElementById('btnGreen').classList.toggle('active', theme === 'green');
             document.getElementById('btnMono').classList.toggle('active', theme === 'mono');
@@ -303,9 +299,8 @@
             } else if (theme === 'mono') {
                 asciiOutput.style.color = '#e0e0e0';
             }
-        }
+        };
 
-        // 異步獨立推理，不卡 60FPS 繪製主線程
         async function runFaceDetection() {
             if (!faceLandmarker || video.paused || video.ended || isDetecting) return;
             isDetecting = true;
@@ -318,7 +313,6 @@
                     if (!smoothedLandmarks) {
                         smoothedLandmarks = rawLM.map(p => ({ x: p.x, y: p.y, z: p.z }));
                     } else {
-                        // Temporal Exponential Smoothing (EMA = 0.2) 消除瞬間缺幀與跳動
                         for (let i = 0; i < rawLM.length; i++) {
                             smoothedLandmarks[i].x = smoothedLandmarks[i].x * 0.8 + rawLM[i].x * 0.2;
                             smoothedLandmarks[i].y = smoothedLandmarks[i].y * 0.8 + rawLM[i].y * 0.2;
@@ -356,7 +350,6 @@
             }
             hiddenCtx.restore();
 
-            // 觸發 AI 異步偵測
             if (isAlternateMode) {
                 runFaceDetection();
                 applyMeshDeformation(cols, rows);
@@ -375,7 +368,6 @@
             requestAnimationFrame(processFrame);
         }
 
-        // 真正的 468 點 Mesh Deformation (Piecewise Affine Warping)
         function applyMeshDeformation(cols, rows) {
             warpCanvas.width = cols;
             warpCanvas.height = rows;
@@ -385,47 +377,46 @@
 
             if (!smoothedLandmarks) return;
 
-            // 1. 複製基礎 Landmarks 座標系
             const srcPts = smoothedLandmarks.map(p => {
                 const x = (facingMode === 'user') ? (1 - p.x) * cols : p.x * cols;
                 const y = p.y * rows;
                 return { x, y };
             });
 
-            // 2. 建立偽人形變座標點 (Deformed Destination Points)
             const dstPts = srcPts.map(p => ({ x: p.x, y: p.y }));
 
-            // 計算張嘴程度 (Upper Lip 13 to Lower Lip 14)
+            // 計算嘴巴開合度
             const mouthGap = Math.hypot(srcPts[14].x - srcPts[13].x, srcPts[14].y - srcPts[13].y);
             const mouthOpenFactor = Math.max(1.0, mouthGap * 0.15);
 
-            // 【偽人骨骼撕裂】
-            // 嘴角 (78 左, 308 右) 向左右爆發性撕裂
-            dstPts[78].x -= 18 * mouthOpenFactor;
-            dstPts[308].x += 18 * mouthOpenFactor;
+            // 偽人變形（撕裂嘴角、向下拉長下巴、眼睛變尖）
+            if (dstPts[78] && dstPts[308]) {
+                dstPts[78].x -= 18 * mouthOpenFactor;
+                dstPts[308].x += 18 * mouthOpenFactor;
+            }
+            if (dstPts[14] && dstPts[17] && dstPts[152]) {
+                dstPts[14].y += 22 * mouthOpenFactor;
+                dstPts[17].y += 25 * mouthOpenFactor;
+                dstPts[152].y += 18;
+            }
+            if (dstPts[159] && dstPts[145] && dstPts[386] && dstPts[374]) {
+                dstPts[159].y -= 6;
+                dstPts[145].y += 6;
+                dstPts[386].y -= 6;
+                dstPts[374].y += 6;
+            }
 
-            // 下唇與下巴 (14, 17, 152) 往下劇烈拉長
-            dstPts[14].y += 22 * mouthOpenFactor;
-            dstPts[17].y += 25 * mouthOpenFactor;
-            dstPts[152].y += 18;
-
-            // 眼睛 (33, 133, 362, 263) 縱向拉尖垂直開合
-            dstPts[159].y -= 6;
-            dstPts[145].y += 6;
-            dstPts[386].y -= 6;
-            dstPts[374].y += 6;
-
-            // 3. 逐三角形繪製仿射變換網格 (Affine Mesh Deformation)
             TRIANGLES.forEach(tri => {
-                drawWarpedTriangle(
-                    hiddenCtx, warpCtx,
-                    [srcPts[tri[0]], srcPts[tri[1]], srcPts[tri[2]]],
-                    [dstPts[tri[0]], dstPts[tri[1]], dstPts[tri[2]]]
-                );
+                if (srcPts[tri[0]] && srcPts[tri[1]] && srcPts[tri[2]]) {
+                    drawWarpedTriangle(
+                        hiddenCtx, warpCtx,
+                        [srcPts[tri[0]], srcPts[tri[1]], srcPts[tri[2]]],
+                        [dstPts[tri[0]], dstPts[tri[1]], dstPts[tri[2]]]
+                    );
+                }
             });
         }
 
-        // 三角形仿射變換渲染器 (Piecewise Affine Renderer)
         function drawWarpedTriangle(srcCtx, dstCtx, src, dst) {
             dstCtx.save();
             dstCtx.beginPath();
@@ -435,7 +426,6 @@
             dstCtx.closePath();
             dstCtx.clip();
 
-            // 計算仿射矩陣 (Affine Transformation Matrix)
             const den = (src[0].x * (src[1].y - src[2].y) - src[0].y * (src[1].x - src[2].x) + src[1].x * src[2].y - src[1].y * src[2].x);
             if (Math.abs(den) < 0.001) { dstCtx.restore(); return; }
 
@@ -548,7 +538,7 @@
             ctx.shadowBlur = 0;
         }
 
-        function takeSnapshot() {
+        window.takeSnapshot = function() {
             const previewBox = document.getElementById('previewBox');
             previewBox.classList.add('flash');
             setTimeout(() => previewBox.classList.remove('flash'), 200);
@@ -607,11 +597,11 @@
 
             document.getElementById('photoResult').src = dataUrl;
             document.getElementById('photoModal').classList.add('show');
-        }
+        };
 
-        function closeModal() {
+        window.closeModal = function() {
             document.getElementById('photoModal').classList.remove('show');
-        }
+        };
 
         initFaceLandmarker();
         initCamera();
