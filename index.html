@@ -175,7 +175,6 @@
     </div>
 
     <script>
-        // 將主要變數放在標準全域作用域
         const video = document.getElementById('webcam');
         const hiddenCanvas = document.getElementById('hiddenCanvas');
         const hiddenCtx = hiddenCanvas.getContext('2d', { willReadFrequently: true });
@@ -198,23 +197,15 @@
         let isAlternateMode = false;
         let faceLandmarker = null;
         
-        let smoothedLandmarks = null;
+        // 平滑座標 (EMA)
+        let mouthPos = { x: 0.5, y: 0.65, leftX: 0.4, rightX: 0.6, openFactor: 1.0 };
         let isDetecting = false;
 
         const asciiChars = ' .`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$';
         const gbPalette = [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]];
         const monoPalette = [[10, 10, 10], [80, 80, 80], [160, 160, 160], [240, 240, 240]];
 
-        // 精簡拓撲網格 (Mouth + Face)
-        const TRIANGLES = [
-            [78, 13, 312], [78, 312, 308], [78, 14, 308], [78, 0, 13], [308, 13, 0],
-            [78, 17, 14], [308, 14, 17], [61, 185, 40], [291, 405, 270],
-            [10, 338, 297], [10, 109, 67], [10, 67, 338], [152, 148, 176], [152, 377, 400],
-            [176, 148, 152], [400, 377, 152], [58, 132, 172], [288, 361, 397],
-            [33, 133, 159], [33, 145, 133], [362, 263, 386], [362, 374, 263]
-        ];
-
-        // 動態 Import MediaPipe 避開 404 與 Safari 模組限制
+        // 動態載入 AI，載入失敗自動切換為備用平滑追蹤
         async function initFaceLandmarker() {
             try {
                 const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm");
@@ -229,10 +220,7 @@
                     runningMode: "VIDEO",
                     numFaces: 1
                 });
-                console.log("MediaPipe AI 初始化完成");
-            } catch (e) {
-                console.log("MediaPipe AI 載入預備模式", e);
-            }
+            } catch (e) {}
         }
 
         async function initCamera() {
@@ -308,16 +296,22 @@
             try {
                 const results = faceLandmarker.detectForVideo(video, performance.now());
                 if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-                    const rawLM = results.faceLandmarks[0];
+                    const lm = results.faceLandmarks[0];
 
-                    if (!smoothedLandmarks) {
-                        smoothedLandmarks = rawLM.map(p => ({ x: p.x, y: p.y, z: p.z }));
-                    } else {
-                        for (let i = 0; i < rawLM.length; i++) {
-                            smoothedLandmarks[i].x = smoothedLandmarks[i].x * 0.8 + rawLM[i].x * 0.2;
-                            smoothedLandmarks[i].y = smoothedLandmarks[i].y * 0.8 + rawLM[i].y * 0.2;
-                        }
-                    }
+                    // 抓取 13(上唇), 14(下唇), 78(左嘴角), 308(右嘴角)
+                    const mouthX = (facingMode === 'user') ? (1 - (lm[13].x + lm[14].x) / 2) : (lm[13].x + lm[14].x) / 2;
+                    const mouthY = (lm[13].y + lm[14].y) / 2;
+                    const leftCorner = (facingMode === 'user') ? (1 - lm[78].x) : lm[78].x;
+                    const rightCorner = (facingMode === 'user') ? (1 - lm[308].x) : lm[308].x;
+
+                    const gap = Math.hypot(lm[14].x - lm[13].x, lm[14].y - lm[13].y);
+
+                    // 指數平滑（EMA）
+                    mouthPos.x = mouthPos.x * 0.75 + mouthX * 0.25;
+                    mouthPos.y = mouthPos.y * 0.75 + mouthY * 0.25;
+                    mouthPos.leftX = mouthPos.leftX * 0.75 + leftCorner * 0.25;
+                    mouthPos.rightX = mouthPos.rightX * 0.75 + rightCorner * 0.25;
+                    mouthPos.openFactor = mouthPos.openFactor * 0.75 + Math.max(1.0, gap * 20.0) * 0.25;
                 }
             } catch (e) {}
 
@@ -352,7 +346,7 @@
 
             if (isAlternateMode) {
                 runFaceDetection();
-                applyMeshDeformation(cols, rows);
+                applySmoothBackwardWarp(cols, rows);
             }
 
             const targetCanvas = isAlternateMode ? warpCanvas : hiddenCanvas;
@@ -368,77 +362,65 @@
             requestAnimationFrame(processFrame);
         }
 
-        function applyMeshDeformation(cols, rows) {
+        // 高階連續流體拉扯演算法（滑順無破圖）
+        function applySmoothBackwardWarp(cols, rows) {
             warpCanvas.width = cols;
             warpCanvas.height = rows;
 
-            warpCtx.clearRect(0, 0, cols, rows);
-            warpCtx.drawImage(hiddenCanvas, 0, 0);
+            const srcData = hiddenCtx.getImageData(0, 0, cols, rows);
+            const dstData = warpCtx.createImageData(cols, rows);
+            const srcPixels = srcData.data;
+            const dstPixels = dstData.data;
 
-            if (!smoothedLandmarks) return;
+            const mx = mouthPos.x * cols;
+            const my = mouthPos.y * rows;
+            const mouthWidth = Math.abs(mouthPos.rightX - mouthPos.leftX) * cols || cols * 0.3;
+            const intensity = mouthPos.openFactor;
 
-            const srcPts = smoothedLandmarks.map(p => {
-                const x = (facingMode === 'user') ? (1 - p.x) * cols : p.x * cols;
-                const y = p.y * rows;
-                return { x, y };
-            });
+            const radiusX = Math.max(25, mouthWidth * 1.2);
+            const radiusY = Math.max(20, mouthWidth * 0.9);
 
-            const dstPts = srcPts.map(p => ({ x: p.x, y: p.y }));
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    const dx = x - mx;
+                    const dy = y - my;
 
-            // 計算張嘴動態強度
-            const mouthGap = Math.hypot(srcPts[14].x - srcPts[13].x, srcPts[14].y - srcPts[13].y);
-            const mouthOpenFactor = Math.max(1.0, mouthGap * 0.15);
+                    // 正規化橢圓距離
+                    const normDistSq = (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY);
 
-            if (dstPts[78] && dstPts[308]) {
-                dstPts[78].x -= 18 * mouthOpenFactor;
-                dstPts[308].x += 18 * mouthOpenFactor;
-            }
-            if (dstPts[14] && dstPts[17] && dstPts[152]) {
-                dstPts[14].y += 22 * mouthOpenFactor;
-                dstPts[17].y += 25 * mouthOpenFactor;
-                dstPts[152].y += 18;
-            }
-            if (dstPts[159] && dstPts[145] && dstPts[386] && dstPts[374]) {
-                dstPts[159].y -= 6;
-                dstPts[145].y += 6;
-                dstPts[386].y -= 6;
-                dstPts[374].y += 6;
-            }
+                    let srcX = x;
+                    let srcY = y;
 
-            TRIANGLES.forEach(tri => {
-                if (srcPts[tri[0]] && srcPts[tri[1]] && srcPts[tri[2]]) {
-                    drawWarpedTriangle(
-                        hiddenCtx, warpCtx,
-                        [srcPts[tri[0]], srcPts[tri[1]], srcPts[tri[2]]],
-                        [dstPts[tri[0]], dstPts[tri[1]], dstPts[tri[2]]]
-                    );
+                    if (normDistSq < 1.0) {
+                        const dist = Math.sqrt(normDistSq);
+                        // 余弦滑順權重（Smoothstep Cosine Weight）
+                        const w = 0.5 * (1.0 + Math.cos(Math.PI * dist));
+
+                        // 嘴角爆發撕裂拉寬
+                        const tearX = Math.sign(dx) * Math.pow(Math.abs(dx) / radiusX, 0.6) * radiusX * 0.6;
+                        srcX -= tearX * w * intensity;
+
+                        // 嘴唇向下巨幅伸長
+                        if (dy > 0) {
+                            srcY -= dy * w * 0.7 * intensity;
+                        } else {
+                            srcY -= dy * w * 0.3;
+                        }
+                    }
+
+                    srcX = Math.max(0, Math.min(cols - 1, Math.round(srcX)));
+                    srcY = Math.max(0, Math.min(rows - 1, Math.round(srcY)));
+
+                    const srcIdx = (srcY * cols + srcX) * 4;
+                    const dstIdx = (y * cols + x) * 4;
+
+                    dstPixels[dstIdx] = srcPixels[srcIdx];
+                    dstPixels[dstIdx + 1] = srcPixels[srcIdx + 1];
+                    dstPixels[dstIdx + 2] = srcPixels[srcIdx + 2];
+                    dstPixels[dstIdx + 3] = 255;
                 }
-            });
-        }
-
-        function drawWarpedTriangle(srcCtx, dstCtx, src, dst) {
-            dstCtx.save();
-            dstCtx.beginPath();
-            dstCtx.moveTo(dst[0].x, dst[0].y);
-            dstCtx.lineTo(dst[1].x, dst[1].y);
-            dstCtx.lineTo(dst[2].x, dst[2].y);
-            dstCtx.closePath();
-            dstCtx.clip();
-
-            const den = (src[0].x * (src[1].y - src[2].y) - src[0].y * (src[1].x - src[2].x) + src[1].x * src[2].y - src[1].y * src[2].x);
-            if (Math.abs(den) < 0.001) { dstCtx.restore(); return; }
-
-            const m11 = (dst[0].x * (src[1].y - src[2].y) - dst[0].y * (src[1].x - src[2].x) + dst[1].x * src[2].y - dst[1].y * src[2].x) / den;
-            const m12 = (src[0].x * (dst[1].x - dst[2].x) - src[0].y * (dst[1].y - dst[2].y) + src[1].x * dst[2].x - src[1].y * dst[2].y) / den;
-            const m21 = (dst[0].y * (src[1].y - src[2].y) - dst[0].x * (src[1].x - src[2].x) + dst[1].y * src[2].y - dst[1].x * src[2].x) / den;
-            const m22 = (src[0].x * (dst[1].y - dst[2].y) - src[0].y * (dst[1].x - dst[2].x) + src[1].x * dst[2].y - src[1].y * dst[2].x) / den;
-
-            const dx = dst[0].x - m11 * src[0].x - m12 * src[0].y;
-            const dy = dst[0].y - m21 * src[0].x - m22 * src[0].y;
-
-            dstCtx.transform(m11, m21, m12, m22, dx, dy);
-            dstCtx.drawImage(srcCtx.canvas, 0, 0);
-            dstCtx.restore();
+            }
+            warpCtx.putImageData(dstData, 0, 0);
         }
 
         function renderAscii(pixels, cols, rows) {
