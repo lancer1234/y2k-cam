@@ -450,7 +450,6 @@ function renderPixelArt(pixels, cols, rows) {
     pixelCtx.drawImage(lowResCanvas, 0, 0, pixelCanvas.width, pixelCanvas.height);
 
     if (colorTheme === 'ccd') addCcdOverlay(pixelCtx, pixelCanvas.width, pixelCanvas.height);
-    drawY2KStampOnCanvas(pixelCtx, pixelCanvas.width, pixelCanvas.height);
     lastRenderedCanvas = pixelCanvas;
 }
 
@@ -539,9 +538,12 @@ function processFrame(timestamp) {
 
     if (currentMode === 'ascii') {
         renderAscii(imgData.data, cols, rows);
+        window.applyQuarterBlackMist?.(asciiCanvas);
         updateY2KStampText();
     } else {
         renderPixelArt(imgData.data, cols, rows);
+        window.applyQuarterBlackMist?.(pixelCanvas);
+        drawY2KStampOnCanvas(pixelCtx, pixelCanvas.width, pixelCanvas.height);
         asciiStamp.textContent = '';
     }
 
