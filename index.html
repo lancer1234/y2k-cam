@@ -53,15 +53,16 @@
 
     <div class="modal" id="videoModal" role="dialog" aria-modal="true" aria-label="錄影預覽">
         <video id="videoResult" controls playsinline></video>
-        <div class="modal-tip">錄影完成，可以播放、分享或儲存</div>
+        <div class="modal-tip">錄影完成後會自動轉成 MP4</div>
         <div class="modal-actions">
             <button class="modal-action" id="shareVideoBtn" type="button" onclick="shareCurrentVideo()">分享</button>
-            <a class="modal-action download-link" id="downloadVideoBtn" download="y2k-cam.webm">儲存影片</a>
+            <a class="modal-action download-link" id="downloadVideoBtn" download="y2k-cam.mp4">儲存影片</a>
             <button class="modal-close" type="button" onclick="closeVideoModal()">關閉</button>
         </div>
     </div>
 
     <script type="module" src="app.js"></script>
     <script type="module" src="black-mist.js"></script>
+    <script type="module" src="mp4-converter.js"></script>
 </body>
 </html>
