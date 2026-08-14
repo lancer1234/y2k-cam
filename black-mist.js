@@ -1,58 +1,79 @@
 const asciiCanvas = document.getElementById('asciiCanvas');
 const pixelCanvas = document.getElementById('pixelCanvas');
 const blackMistButton = document.getElementById('btnBlackMist');
-
-const bloomCanvas = document.createElement('canvas');
-const bloomCtx = bloomCanvas.getContext('2d');
+const previewBox = document.getElementById('previewBox');
+const asciiStamp = document.getElementById('asciiStamp');
 
 let blackMistEnabled = false;
 let blackMistRafId = 0;
 
-function ensureBloomSize(canvas) {
-    if (bloomCanvas.width !== canvas.width) bloomCanvas.width = canvas.width;
-    if (bloomCanvas.height !== canvas.height) bloomCanvas.height = canvas.height;
-}
+// Keep diffusion on a dedicated overlay canvas. The main renderer redraws the
+// ASCII/pixel canvas every frame, so modifying that same canvas from a second
+// RAF loop could be overwritten immediately and make the effect nearly invisible.
+const mistCanvas = document.createElement('canvas');
+const mistCtx = mistCanvas.getContext('2d');
+mistCanvas.setAttribute('aria-hidden', 'true');
+mistCanvas.style.position = 'absolute';
+mistCanvas.style.inset = '0';
+mistCanvas.style.width = '100%';
+mistCanvas.style.height = '100%';
+mistCanvas.style.pointerEvents = 'none';
+mistCanvas.style.display = 'none';
+mistCanvas.style.zIndex = '1';
+previewBox.insertBefore(mistCanvas, asciiStamp);
+asciiStamp.style.zIndex = '2';
+const recordIndicator = document.getElementById('recordIndicator');
+if (recordIndicator) recordIndicator.style.zIndex = '3';
 
 function getVisibleRenderCanvas() {
     if (pixelCanvas.style.display === 'block') return pixelCanvas;
     return asciiCanvas;
 }
 
-function applyBlackMist(canvas) {
-    if (!canvas.width || !canvas.height) return;
+function ensureMistSize(source) {
+    if (mistCanvas.width !== source.width) mistCanvas.width = source.width;
+    if (mistCanvas.height !== source.height) mistCanvas.height = source.height;
+}
 
-    ensureBloomSize(canvas);
+function renderBlackMistOverlay(source) {
+    if (!source.width || !source.height) return;
+    ensureMistSize(source);
 
-    bloomCtx.setTransform(1, 0, 0, 1, 0, 0);
-    bloomCtx.globalCompositeOperation = 'source-over';
-    bloomCtx.globalAlpha = 1;
-    bloomCtx.filter = 'none';
-    bloomCtx.clearRect(0, 0, bloomCanvas.width, bloomCanvas.height);
-    bloomCtx.drawImage(canvas, 0, 0);
+    const w = mistCanvas.width;
+    const h = mistCanvas.height;
+    const blurPx = Math.max(4, Math.round(Math.min(w, h) * 0.018));
 
-    const ctx = canvas.getContext('2d');
-    ctx.save();
+    mistCtx.setTransform(1, 0, 0, 1, 0, 0);
+    mistCtx.clearRect(0, 0, w, h);
 
-    // A soft, low-opacity screen blend gives bright areas a diffusion halo
-    // while keeping edges and darker regions substantially intact.
-    ctx.globalCompositeOperation = 'screen';
-    ctx.globalAlpha = 0.18;
-    ctx.filter = `blur(${Math.max(2, Math.round(Math.min(canvas.width, canvas.height) * 0.009))}px) brightness(1.16) saturate(0.94)`;
-    ctx.drawImage(bloomCanvas, 0, 0);
+    // Stronger highlight diffusion: two blurred screen passes create the
+    // characteristic soft halo around bright areas without blurring the base image.
+    mistCtx.save();
+    mistCtx.globalCompositeOperation = 'screen';
+    mistCtx.globalAlpha = 0.34;
+    mistCtx.filter = `blur(${blurPx}px) brightness(1.35) saturate(0.88)`;
+    mistCtx.drawImage(source, 0, 0, w, h);
+    mistCtx.restore();
 
-    // Slightly lift the deepest blacks, similar to light scattering in a
-    // physical black diffusion filter rather than applying a full-frame blur.
-    ctx.filter = 'none';
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = 'rgba(24, 20, 17, 0.035)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    mistCtx.save();
+    mistCtx.globalCompositeOperation = 'screen';
+    mistCtx.globalAlpha = 0.16;
+    mistCtx.filter = `blur(${Math.max(2, Math.round(blurPx * 0.45))}px) brightness(1.2)`;
+    mistCtx.drawImage(source, 0, 0, w, h);
+    mistCtx.restore();
 
-    ctx.restore();
+    // Black diffusion also lowers perceived contrast and slightly lifts shadows.
+    mistCtx.save();
+    mistCtx.globalCompositeOperation = 'source-over';
+    mistCtx.fillStyle = 'rgba(30, 24, 20, 0.055)';
+    mistCtx.fillRect(0, 0, w, h);
+    mistCtx.restore();
 }
 
 function blackMistLoop() {
     if (blackMistEnabled) {
-        applyBlackMist(getVisibleRenderCanvas());
+        mistCanvas.style.display = 'block';
+        renderBlackMistOverlay(getVisibleRenderCanvas());
     }
     blackMistRafId = requestAnimationFrame(blackMistLoop);
 }
@@ -62,6 +83,11 @@ function toggleBlackMist() {
     blackMistButton.classList.toggle('active', blackMistEnabled);
     blackMistButton.textContent = blackMistEnabled ? '黑柔焦 ON' : '黑柔焦 OFF';
     blackMistButton.setAttribute('aria-pressed', String(blackMistEnabled));
+
+    if (!blackMistEnabled) {
+        mistCanvas.style.display = 'none';
+        mistCtx.clearRect(0, 0, mistCanvas.width, mistCanvas.height);
+    }
 }
 
 window.toggleBlackMist = toggleBlackMist;
