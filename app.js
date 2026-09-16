@@ -19,7 +19,6 @@ let colorTheme = 'green';
 let facingMode = 'user';
 let currentStream = null;
 
-// Keep the original camera-switch / easter-egg trigger behavior unchanged.
 let switchCount = 0;
 let isAlternateMode = false;
 let faceLandmarker = null;
@@ -115,7 +114,7 @@ async function initCamera() {
     }
 }
 
-// Intentionally preserved from the original project.
+// Every third switch opens the hidden mode.
 function switchCamera() {
     switchCount++;
 
