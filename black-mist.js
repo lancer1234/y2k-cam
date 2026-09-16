@@ -27,8 +27,7 @@ function extractHighlights(canvas) {
     const imageData = highlightCtx.getImageData(0, 0, highlightCanvas.width, highlightCanvas.height);
     const data = imageData.data;
 
-    // Tuned to approximate a 1/4 black diffusion filter: highlights begin to
-    // bloom before clipping, while midtones and edges retain most of their detail.
+    // 1/4 black mist: bloom highlights before clipping.
     const threshold = 168;
 
     for (let i = 0; i < data.length; i += 4) {
@@ -44,8 +43,7 @@ function extractHighlights(canvas) {
 
         const strength = Math.min(1, (luma - threshold) / 87);
 
-        // Physical black diffusion tends to produce a subtly warmer, softer
-        // highlight rolloff rather than a neutral white glow.
+        // Warm the bloom slightly.
         data[i] = Math.min(255, r + 12 * strength);
         data[i + 1] = Math.min(255, g + 6 * strength);
         data[i + 2] = Math.max(0, b - 3 * strength);
@@ -82,25 +80,25 @@ function applyQuarterBlackMist(canvas) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(sourceCanvas, 0, 0);
 
-    // Near halo: restrained diffusion close to highlight edges.
+    // Tight halo.
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = 0.20;
     ctx.filter = `blur(${blurNear}px) brightness(1.05) saturate(0.97)`;
     ctx.drawImage(highlightCanvas, 0, 0);
 
-    // Far halo: broader, lower-opacity scattering characteristic of 1/4 strength.
+    // Wide halo.
     ctx.globalAlpha = 0.14;
     ctx.filter = `blur(${blurFar}px) brightness(1.14) saturate(0.92)`;
     ctx.drawImage(highlightCanvas, 0, 0);
 
-    // Slight shadow lift / contrast compression without washing the whole frame.
+    // Small shadow lift.
     ctx.filter = 'none';
     ctx.globalCompositeOperation = 'screen';
     ctx.globalAlpha = 0.032;
     ctx.fillStyle = 'rgb(42, 36, 32)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Very subtle warm scattering tint.
+    // Warm tint.
     ctx.globalAlpha = 0.022;
     ctx.fillStyle = 'rgb(255, 229, 214)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
