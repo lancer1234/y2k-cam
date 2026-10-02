@@ -18,6 +18,45 @@ let currentMode = 'ascii';
 let colorTheme = 'green';
 let facingMode = 'user';
 let currentStream = null;
+let captureAspect = null;
+let cameraReady = false;
+let cameraStarting = false;
+let hasRenderedFrame = false;
+let recordingBusy = false;
+let recordingStream = null;
+let lastFrameAt = -Infinity;
+let ccdNoiseTick = 0;
+let faceLoadPromise = null;
+const captureHint = document.getElementById('captureHint');
+const defaultCaptureHint = captureHint.textContent;
+
+function updateCaptureControls() {
+    const locked = cameraStarting || recordingBusy;
+    for (const id of ['btnAscii', 'btnPixel', 'switchCameraBtn']) {
+        document.getElementById(id).disabled = locked;
+    }
+    document.getElementById('snapshotBtn').disabled = !cameraReady || !hasRenderedFrame;
+    recordBtn.disabled = (!cameraReady || !hasRenderedFrame) && !recordingBusy;
+}
+
+function setCameraStatus(message, retry = false) {
+    document.getElementById('cameraStatus').hidden = !message;
+    document.getElementById('cameraMessage').textContent = message;
+    document.getElementById('retryCameraBtn').hidden = !retry;
+}
+
+function openPreviewDialog(id) {
+    const dialog = document.getElementById(id);
+    dialog.showModal();
+    dialog.classList.add('show');
+}
+
+function closePreviewDialog(id) {
+    const dialog = document.getElementById(id);
+    dialog.classList.remove('show');
+    dialog.close();
+}
+
 
 let switchCount = 0;
 let isAlternateMode = false;
@@ -85,6 +124,13 @@ function startAnimationLoop() {
 }
 
 async function initCamera() {
+    if (cameraStarting || recordingBusy) return;
+    captureAspect = window.matchMedia('(orientation: portrait)').matches ? 9 / 16 : null;
+    cameraStarting = true;
+    cameraReady = false;
+    hasRenderedFrame = false;
+    updateCaptureControls();
+    setCameraStatus('正在啟動相機…請允許相機權限');
     stopAnimationLoop();
 
     if (currentStream) {
@@ -96,10 +142,14 @@ async function initCamera() {
     setColorTheme(colorTheme);
 
     try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error('CameraUnavailable');
+        }
         currentStream = await navigator.mediaDevices.getUserMedia({
             video: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
+                width: { ideal: captureAspect ? 720 : 1280 },
+                height: { ideal: captureAspect ? 1280 : 720 },
+                aspectRatio: { ideal: captureAspect || 16 / 9 },
                 facingMode
             },
             audio: false
@@ -107,19 +157,35 @@ async function initCamera() {
         video.srcObject = currentStream;
         await video.play();
         configureFrameBuffers(true);
+        cameraReady = true;
+        setCameraStatus('');
         startAnimationLoop();
     } catch (error) {
         console.error('Camera access failed:', error);
-        alert('無法存取攝影機。');
+        currentStream?.getTracks().forEach(track => track.stop());
+        currentStream = null;
+        const message = error.name === 'NotAllowedError'
+            ? '相機權限未開啟。請在瀏覽器設定允許相機，再試一次。'
+            : error.name === 'NotFoundError'
+                ? '找不到可用的相機。請確認裝置已連接，再試一次。'
+                : !window.isSecureContext
+                    ? '請使用 HTTPS 或 localhost 開啟，才能使用相機。'
+                    : '相機無法啟動。請關閉其他使用相機的程式，再試一次。';
+        setCameraStatus(message, true);
+    } finally {
+        cameraStarting = false;
+        updateCaptureControls();
     }
 }
 
 // Every third switch opens the hidden mode.
 function switchCamera() {
+    if (cameraStarting || recordingBusy) return;
     switchCount++;
 
     if (switchCount % 3 === 0) {
         isAlternateMode = true;
+        faceLoadPromise ||= initFaceLandmarker();
         document.getElementById('mainTitle').classList.add('alternate-mode');
         asciiStamp.classList.add('glitch');
     } else {
@@ -132,30 +198,40 @@ function switchCamera() {
 }
 
 function setMode(mode) {
+    if (recordingBusy || !['ascii', 'pixel'].includes(mode)) return;
     currentMode = mode;
+    hasRenderedFrame = false;
+    updateCaptureControls();
     document.getElementById('btnAscii').classList.toggle('active', mode === 'ascii');
     document.getElementById('btnPixel').classList.toggle('active', mode === 'pixel');
     asciiCanvas.style.display = mode === 'ascii' ? 'block' : 'none';
     pixelCanvas.style.display = mode === 'pixel' ? 'block' : 'none';
+    for (const [id, selected] of [['btnAscii', mode === 'ascii'], ['btnPixel', mode === 'pixel']]) {
+        document.getElementById(id).setAttribute('aria-pressed', String(selected));
+    }
     configureFrameBuffers(true);
 }
 
 function setColorTheme(theme) {
+    if (!['green', 'mono', 'color', 'ccd'].includes(theme)) return;
     colorTheme = theme;
     document.getElementById('btnGreen').classList.toggle('active', theme === 'green');
     document.getElementById('btnMono').classList.toggle('active', theme === 'mono');
     document.getElementById('btnColor').classList.toggle('active', theme === 'color');
     document.getElementById('btnCcd').classList.toggle('active', theme === 'ccd');
+    for (const [id, value] of [['btnGreen', 'green'], ['btnMono', 'mono'], ['btnColor', 'color'], ['btnCcd', 'ccd']]) {
+        document.getElementById(id).setAttribute('aria-pressed', String(value === theme));
+    }
 }
 
 function getFrameSize() {
     const width = video.videoWidth || 1280;
     const height = video.videoHeight || 720;
-    const videoAspect = height / width;
+    const videoAspect = captureAspect ? 1 / captureAspect : height / width;
 
     if (currentMode === 'ascii') {
         const cols = 85;
-        const fontAspect = 0.55;
+        const fontAspect = 3.6 / 6;
         return { cols, rows: Math.max(1, Math.floor((cols * videoAspect) / fontAspect)) };
     }
 
@@ -192,17 +268,25 @@ function configureFrameBuffers(force = false) {
     if (asciiCanvas.height !== Math.ceil(rows * lineHeight + pad * 2)) asciiCanvas.height = Math.ceil(rows * lineHeight + pad * 2);
 
     pixelImageData = pixelCtx.createImageData(cols, rows);
+    const canvas = currentMode === 'ascii' ? asciiCanvas : pixelCanvas;
+    previewBox.style.width = `min(100%, ${52 * canvas.width / canvas.height}dvh)`;
+    previewBox.style.aspectRatio = String(canvas.width / canvas.height);
 }
 
 function drawVideoFrame(cols, rows) {
     hiddenCtx.setTransform(1, 0, 0, 1, 0, 0);
     hiddenCtx.clearRect(0, 0, cols, rows);
     hiddenCtx.save();
+    const targetAspect = captureAspect || video.videoWidth / video.videoHeight;
+    const cropWidth = Math.min(video.videoWidth, video.videoHeight * targetAspect);
+    const cropHeight = Math.min(video.videoHeight, video.videoWidth / targetAspect);
+    const cropX = (video.videoWidth - cropWidth) / 2;
+    const cropY = (video.videoHeight - cropHeight) / 2;
     if (facingMode === 'user') {
         hiddenCtx.scale(-1, 1);
-        hiddenCtx.drawImage(video, -cols, 0, cols, rows);
+        hiddenCtx.drawImage(video, cropX, cropY, cropWidth, cropHeight, -cols, 0, cols, rows);
     } else {
-        hiddenCtx.drawImage(video, 0, 0, cols, rows);
+        hiddenCtx.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, cols, rows);
     }
     hiddenCtx.restore();
 }
@@ -218,17 +302,26 @@ function runFaceDetection(timestamp) {
         const results = faceLandmarker.detectForVideo(video, timestamp);
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
             const lm = results.faceLandmarks[0];
-            const getX = p => (facingMode === 'user') ? (1 - p.x) : p.x;
+            const targetAspect = captureAspect || video.videoWidth / video.videoHeight;
+            const cropWidth = Math.min(video.videoWidth, video.videoHeight * targetAspect);
+            const cropHeight = Math.min(video.videoHeight, video.videoWidth / targetAspect);
+            const cropX = (video.videoWidth - cropWidth) / 2;
+            const cropY = (video.videoHeight - cropHeight) / 2;
+            const getX = p => {
+                const x = (p.x * video.videoWidth - cropX) / cropWidth;
+                return facingMode === 'user' ? 1 - x : x;
+            };
+            const getY = p => (p.y * video.videoHeight - cropY) / cropHeight;
 
             const mouthX = (getX(lm[13]) + getX(lm[14])) / 2;
-            const mouthY = (lm[13].y + lm[14].y) / 2;
+            const mouthY = (getY(lm[13]) + getY(lm[14])) / 2;
             const lx = getX(lm[78]);
-            const ly = lm[78].y;
+            const ly = getY(lm[78]);
             const rx = getX(lm[308]);
-            const ry = lm[308].y;
-            const ley = (lm[159].y + lm[145].y) / 2;
+            const ry = getY(lm[308]);
+            const ley = (getY(lm[159]) + getY(lm[145])) / 2;
             const lex = getX(lm[33]);
-            const rey = (lm[386].y + lm[374].y) / 2;
+            const rey = (getY(lm[386]) + getY(lm[374])) / 2;
             const rex = getX(lm[362]);
             const gap = Math.hypot(lm[14].x - lm[13].x, lm[14].y - lm[13].y);
 
@@ -278,6 +371,7 @@ function applyCheshireSmileWarp(cols, rows) {
     const maxX = Math.min(cols - 1, Math.ceil(Math.max(mx + mouthRadius, lex + eyeRadius, rex + eyeRadius)));
     const minY = Math.max(0, Math.floor(Math.min(my - mouthRadius, ley - eyeRadius, rey - eyeRadius)));
     const maxY = Math.min(rows - 1, Math.ceil(Math.max(my + mouthRadius, ley + eyeRadius, rey + eyeRadius)));
+    if (maxX < minX || maxY < minY) return;
     const roiWidth = Math.max(1, maxX - minX + 1);
     const roiHeight = Math.max(1, maxY - minY + 1);
     const roi = warpCtx.getImageData(minX, minY, roiWidth, roiHeight);
@@ -360,7 +454,7 @@ function getThemeColor(r, g, b, x, y) {
         const liftedR = (r - 128) * contrast + 128;
         const liftedG = (g - 128) * contrast + 128;
         const liftedB = (b - 128) * contrast + 128;
-        const noise = (((x * 17 + y * 31 + Math.floor(performance.now() / 90) * 13) % 17) - 8) * 0.9;
+        const noise = (((x * 17 + y * 31 + ccdNoiseTick * 13) % 17) - 8) * 0.9;
         const highlight = Math.max(0, (brightness - 185) / 70);
         return [
             clamp255(liftedR + 9 * highlight + noise),
@@ -496,10 +590,6 @@ function getY2KTimeString() {
     return `'${year} ${month} ${day}  ${hours}:${mins}`;
 }
 
-function updateY2KStampText() {
-    asciiStamp.textContent = getY2KTimeString();
-}
-
 function drawY2KStampOnCanvas(ctx, width, height) {
     ctx.save();
     ctx.font = 'bold 16px "Courier New", monospace';
@@ -512,6 +602,12 @@ function drawY2KStampOnCanvas(ctx, width, height) {
 }
 
 function processFrame(timestamp) {
+    if (timestamp - lastFrameAt < 1000 / 30) {
+        rafId = requestAnimationFrame(processFrame);
+        return;
+    }
+    lastFrameAt = timestamp;
+    ccdNoiseTick = Math.floor(timestamp / 90);
     if (video.paused || video.ended) {
         rafId = requestAnimationFrame(processFrame);
         return;
@@ -538,7 +634,8 @@ function processFrame(timestamp) {
     if (currentMode === 'ascii') {
         renderAscii(imgData.data, cols, rows);
         window.applyQuarterBlackMist?.(asciiCanvas);
-        updateY2KStampText();
+        drawY2KStampOnCanvas(asciiCtx, asciiCanvas.width, asciiCanvas.height);
+        asciiStamp.textContent = '';
     } else {
         renderPixelArt(imgData.data, cols, rows);
         window.applyQuarterBlackMist?.(pixelCanvas);
@@ -546,6 +643,10 @@ function processFrame(timestamp) {
         asciiStamp.textContent = '';
     }
 
+    if (!hasRenderedFrame) {
+        hasRenderedFrame = true;
+        updateCaptureControls();
+    }
     rafId = requestAnimationFrame(processFrame);
 }
 
@@ -559,6 +660,7 @@ function canvasToBlob(canvas, type = 'image/png', quality) {
 }
 
 async function takeSnapshot() {
+    if (!cameraReady || !hasRenderedFrame) return;
     flashPreview();
 
     const source = currentMode === 'ascii' ? asciiCanvas : pixelCanvas;
@@ -568,8 +670,6 @@ async function takeSnapshot() {
     const saveCtx = saveCanvas.getContext('2d');
     saveCtx.drawImage(source, 0, 0);
 
-    if (currentMode === 'ascii') drawY2KStampOnCanvas(saveCtx, saveCanvas.width, saveCanvas.height);
-
     currentPhotoBlob = await canvasToBlob(saveCanvas, 'image/png');
     if (!currentPhotoBlob) return;
 
@@ -578,7 +678,7 @@ async function takeSnapshot() {
     if (oldUrl) URL.revokeObjectURL(oldUrl);
     photoResult.dataset.objectUrl = dataUrl;
     photoResult.src = dataUrl;
-    document.getElementById('photoModal').classList.add('show');
+    openPreviewDialog('photoModal');
 }
 
 async function shareCurrentPhoto() {
@@ -604,10 +704,10 @@ async function shareCurrentPhoto() {
 
 function getRecorderMimeType() {
     const candidates = [
+        'video/mp4',
         'video/webm;codecs=vp9',
         'video/webm;codecs=vp8',
-        'video/webm',
-        'video/mp4'
+        'video/webm'
     ];
     return candidates.find(type => window.MediaRecorder?.isTypeSupported?.(type)) || '';
 }
@@ -621,16 +721,17 @@ async function toggleRecording() {
 }
 
 async function startRecording() {
+    if (!cameraReady || !hasRenderedFrame || recordingBusy) return;
     if (!lastRenderedCanvas.captureStream || typeof MediaRecorder === 'undefined') {
-        alert('這個瀏覽器目前不支援網頁錄影。');
+        captureHint.textContent = '這個瀏覽器不支援錄影，仍可儲存照片。';
         return;
     }
 
     const canvas = currentMode === 'ascii' ? asciiCanvas : pixelCanvas;
-    const stream = canvas.captureStream(30);
-    const mimeType = getRecorderMimeType();
-
     try {
+        const stream = canvas.captureStream(30);
+        recordingStream = stream;
+        const mimeType = getRecorderMimeType();
         recordedChunks = [];
         mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
         mediaRecorder.ondataavailable = event => {
@@ -638,6 +739,10 @@ async function startRecording() {
         };
         mediaRecorder.onstop = finishRecording;
         mediaRecorder.start(250);
+        recordingBusy = true;
+        updateCaptureControls();
+        recordBtn.setAttribute('aria-pressed', 'true');
+        captureHint.textContent = '錄影中 · 15 秒後自動停止 · 停止後可切換鏡頭與畫面';
         recordBtn.classList.add('recording');
         recordBtn.textContent = '■ 停止';
         recordIndicator.classList.add('show');
@@ -647,7 +752,9 @@ async function startRecording() {
         }, 15000);
     } catch (error) {
         console.error('Recording failed:', error);
-        alert('無法開始錄影。');
+        recordingStream?.getTracks().forEach(track => track.stop());
+        recordingStream = null;
+        captureHint.textContent = '無法開始錄影，請重試或改用其他瀏覽器。';
     }
 }
 
@@ -657,6 +764,7 @@ function stopRecording() {
         recordingStopTimer = 0;
     }
     if (mediaRecorder?.state === 'recording') mediaRecorder.stop();
+    recordBtn.setAttribute('aria-pressed', 'false');
     recordBtn.classList.remove('recording');
     recordBtn.textContent = '● 錄影';
     recordIndicator.classList.remove('show');
@@ -666,6 +774,12 @@ function finishRecording() {
     const type = mediaRecorder?.mimeType || 'video/webm';
     currentVideoBlob = new Blob(recordedChunks, { type });
     recordedChunks = [];
+    recordingStream?.getTracks().forEach(track => track.stop());
+    recordingStream = null;
+    recordingBusy = false;
+    mediaRecorder = null;
+    updateCaptureControls();
+    captureHint.textContent = defaultCaptureHint;
 
     if (currentVideoUrl) URL.revokeObjectURL(currentVideoUrl);
     currentVideoUrl = URL.createObjectURL(currentVideoBlob);
@@ -673,7 +787,7 @@ function finishRecording() {
     const download = document.getElementById('downloadVideoBtn');
     download.href = currentVideoUrl;
     download.download = type.includes('mp4') ? 'y2k-cam.mp4' : 'y2k-cam.webm';
-    document.getElementById('videoModal').classList.add('show');
+    openPreviewDialog('videoModal');
 }
 
 async function shareCurrentVideo() {
@@ -695,22 +809,24 @@ async function shareCurrentVideo() {
 }
 
 function closeModal() {
-    document.getElementById('photoModal').classList.remove('show');
+    closePreviewDialog('photoModal');
 }
 
 function closeVideoModal() {
-    document.getElementById('videoModal').classList.remove('show');
+    closePreviewDialog('videoModal');
     videoResult.pause();
 }
 
 function handleVisibilityChange() {
     if (document.hidden) {
         stopAnimationLoop();
+        if (mediaRecorder?.state === 'recording') stopRecording();
     } else if (currentStream && !rafId) {
         startAnimationLoop();
     }
 }
 
+window.initCamera = initCamera;
 window.setMode = setMode;
 window.setColorTheme = setColorTheme;
 window.switchCamera = switchCamera;
@@ -728,5 +844,13 @@ window.addEventListener('pagehide', () => {
     currentStream?.getTracks().forEach(track => track.stop());
 });
 
-initFaceLandmarker();
+for (const dialog of document.querySelectorAll('dialog')) {
+    dialog.addEventListener('close', () => {
+        dialog.classList.remove('show');
+        if (dialog.id === 'videoModal') videoResult.pause();
+    });
+}
+window.addEventListener('pageshow', event => {
+    if (event.persisted) initCamera();
+});
 initCamera();

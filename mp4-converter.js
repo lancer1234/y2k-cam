@@ -1,3 +1,4 @@
+const shareOriginalVideo = window.shareCurrentVideo;
 const videoModal = document.getElementById('videoModal');
 const videoResult = document.getElementById('videoResult');
 const videoTip = videoModal.querySelector('.modal-tip');
@@ -74,6 +75,7 @@ function setConversionControls(enabled) {
     downloadVideoBtn.style.pointerEvents = enabled ? '' : 'none';
     downloadVideoBtn.style.opacity = enabled ? '' : '0.45';
     downloadVideoBtn.setAttribute('aria-disabled', String(!enabled));
+    downloadVideoBtn.tabIndex = enabled ? 0 : -1;
 }
 
 async function transcodeToMp4(sourceBlob) {
@@ -89,6 +91,7 @@ async function transcodeToMp4(sourceBlob) {
         let exitCode = await engine.exec([
             '-i', inputName,
             '-an',
+            '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-crf', '23',
@@ -102,6 +105,7 @@ async function transcodeToMp4(sourceBlob) {
             exitCode = await engine.exec([
                 '-i', inputName,
                 '-an',
+            '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
                 '-c:v', 'mpeg4',
                 '-q:v', '4',
                 '-pix_fmt', 'yuv420p',
@@ -128,6 +132,7 @@ async function processLatestRecording() {
     lastHandledSource = sourceUrl;
     conversionInProgress = true;
     convertedVideoBlob = null;
+    const originalDownloadName = downloadVideoBtn.download;
     setConversionControls(false);
     videoTip.textContent = '正在準備 MP4 轉換…';
 
@@ -142,7 +147,7 @@ async function processLatestRecording() {
             convertedVideoBlob = await transcodeToMp4(sourceBlob);
         }
 
-        if (serial !== conversionSerial) return;
+        if (serial !== conversionSerial || videoResult.src !== sourceUrl) return;
 
         if (convertedVideoUrl) URL.revokeObjectURL(convertedVideoUrl);
         convertedVideoUrl = URL.createObjectURL(convertedVideoBlob);
@@ -153,10 +158,19 @@ async function processLatestRecording() {
         setConversionControls(true);
     } catch (error) {
         console.error('MP4 conversion failed:', error);
-        videoTip.textContent = 'MP4 轉換失敗，目前保留原始錄影格式';
+        if (serial !== conversionSerial || videoResult.src !== sourceUrl) return;
+        convertedVideoBlob = null;
+        downloadVideoBtn.href = sourceUrl;
+        downloadVideoBtn.download = originalDownloadName;
+        videoTip.textContent = 'MP4 轉換失敗，仍可分享或儲存原始影片';
         setConversionControls(true);
     } finally {
-        if (serial === conversionSerial) conversionInProgress = false;
+        if (serial === conversionSerial) {
+            conversionInProgress = false;
+            if (videoResult.src !== sourceUrl && videoResult.src !== convertedVideoUrl) {
+                queueMicrotask(processLatestRecording);
+            }
+        }
     }
 }
 
@@ -167,7 +181,7 @@ async function shareConvertedVideo() {
     }
 
     if (!convertedVideoBlob) {
-        downloadVideoBtn.click();
+        await shareOriginalVideo();
         return;
     }
 
@@ -190,10 +204,14 @@ async function shareConvertedVideo() {
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
+downloadVideoBtn.addEventListener('click', event => {
+    if (conversionInProgress) event.preventDefault();
+});
+
 window.shareCurrentVideo = shareConvertedVideo;
 
 const modalObserver = new MutationObserver(() => {
-    if (videoModal.classList.contains('show')) {
+    if (videoModal.open) {
         queueMicrotask(processLatestRecording);
     }
 });
@@ -205,4 +223,13 @@ window.addEventListener('pagehide', () => {
     conversionSerial++;
     if (convertedVideoUrl) URL.revokeObjectURL(convertedVideoUrl);
     ffmpeg?.terminate();
+});
+
+window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    ffmpeg = null;
+    ffmpegLoadPromise = null;
+    conversionInProgress = false;
+    lastHandledSource = '';
+    modalObserver.observe(videoModal, { attributes: true, attributeFilter: ['class'] });
 });
