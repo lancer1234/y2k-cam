@@ -15,6 +15,7 @@ const photoResult = document.getElementById('photoResult');
 const videoResult = document.getElementById('videoResult');
 
 let currentMode = 'ascii';
+let captureKind = 'photo';
 let colorTheme = 'green';
 let facingMode = 'user';
 let currentStream = null;
@@ -30,13 +31,43 @@ let faceLoadPromise = null;
 const captureHint = document.getElementById('captureHint');
 const defaultCaptureHint = captureHint.textContent;
 
+function updateEffectsSummary() {
+    const modeLabel = currentMode === 'ascii' ? 'ASCII' : '8-bit';
+    const themeLabel = { green: '經典綠', mono: '黑白', color: '彩色', ccd: 'CCD' }[colorTheme];
+    document.getElementById('effectsSummary').textContent = `${modeLabel} · ${themeLabel}${window.isBlackMistEnabled?.() ? ' · 柔焦' : ''}`;
+}
+
+function closeEffectsMenu() {
+    const menu = document.getElementById('effectsMenu');
+    menu.open = false;
+}
+
+function setCaptureKind(kind) {
+    if (recordingBusy || !['photo', 'video'].includes(kind)) return;
+    captureKind = kind;
+    closeEffectsMenu();
+    document.getElementById('snapshotBtn').hidden = kind !== 'photo';
+    recordBtn.hidden = kind !== 'video';
+    for (const [id, value] of [['capturePhotoBtn', 'photo'], ['captureVideoBtn', 'video']]) {
+        document.getElementById(id).classList.toggle('active', value === kind);
+        document.getElementById(id).setAttribute('aria-pressed', String(value === kind));
+    }
+}
+
+function showLastPhoto() {
+    if (!currentPhotoBlob) return;
+    closeEffectsMenu();
+    openPreviewDialog('photoModal');
+}
+
 function updateCaptureControls() {
     const locked = cameraStarting || recordingBusy;
-    for (const id of ['btnAscii', 'btnPixel', 'switchCameraBtn']) {
+    for (const id of ['btnAscii', 'btnPixel', 'switchCameraBtn', 'capturePhotoBtn', 'captureVideoBtn']) {
         document.getElementById(id).disabled = locked;
     }
     document.getElementById('snapshotBtn').disabled = !cameraReady || !hasRenderedFrame;
     recordBtn.disabled = (!cameraReady || !hasRenderedFrame) && !recordingBusy;
+    document.getElementById('lastPhotoBtn').disabled = recordingBusy || !currentPhotoBlob;
 }
 
 function setCameraStatus(message, retry = false) {
@@ -147,15 +178,16 @@ async function initCamera() {
         }
         currentStream = await navigator.mediaDevices.getUserMedia({
             video: {
-                width: { ideal: captureAspect ? 720 : 1280 },
-                height: { ideal: captureAspect ? 1280 : 720 },
-                aspectRatio: { ideal: captureAspect || 16 / 9 },
+                resizeMode: 'none',
                 facingMode
             },
             audio: false
         });
         video.srcObject = currentStream;
         await video.play();
+        if (captureAspect && video.videoWidth < video.videoHeight) {
+            captureAspect = video.videoWidth / video.videoHeight;
+        }
         configureFrameBuffers(true);
         cameraReady = true;
         setCameraStatus('');
@@ -181,6 +213,7 @@ async function initCamera() {
 // Every third switch opens the hidden mode.
 function switchCamera() {
     if (cameraStarting || recordingBusy) return;
+    closeEffectsMenu();
     switchCount++;
 
     if (switchCount % 3 === 0) {
@@ -200,6 +233,7 @@ function switchCamera() {
 function setMode(mode) {
     if (recordingBusy || !['ascii', 'pixel'].includes(mode)) return;
     currentMode = mode;
+    updateEffectsSummary();
     hasRenderedFrame = false;
     updateCaptureControls();
     document.getElementById('btnAscii').classList.toggle('active', mode === 'ascii');
@@ -215,6 +249,7 @@ function setMode(mode) {
 function setColorTheme(theme) {
     if (!['green', 'mono', 'color', 'ccd'].includes(theme)) return;
     colorTheme = theme;
+    updateEffectsSummary();
     document.getElementById('btnGreen').classList.toggle('active', theme === 'green');
     document.getElementById('btnMono').classList.toggle('active', theme === 'mono');
     document.getElementById('btnColor').classList.toggle('active', theme === 'color');
@@ -269,25 +304,30 @@ function configureFrameBuffers(force = false) {
 
     pixelImageData = pixelCtx.createImageData(cols, rows);
     const canvas = currentMode === 'ascii' ? asciiCanvas : pixelCanvas;
-    previewBox.style.width = `min(100%, ${52 * canvas.width / canvas.height}dvh)`;
-    previewBox.style.aspectRatio = String(canvas.width / canvas.height);
+    previewBox.style.setProperty('--preview-aspect', String(canvas.width / canvas.height));
+}
+
+function getFramePlacement() {
+    const sourceAspect = video.videoWidth / video.videoHeight;
+    const targetAspect = captureAspect || sourceAspect;
+    const width = Math.min(1, sourceAspect / targetAspect);
+    const height = Math.min(1, targetAspect / sourceAspect);
+    return { x: (1 - width) / 2, y: (1 - height) / 2, width, height };
 }
 
 function drawVideoFrame(cols, rows) {
     hiddenCtx.setTransform(1, 0, 0, 1, 0, 0);
-    hiddenCtx.clearRect(0, 0, cols, rows);
+    hiddenCtx.fillStyle = '#000';
+    hiddenCtx.fillRect(0, 0, cols, rows);
     hiddenCtx.save();
-    const targetAspect = captureAspect || video.videoWidth / video.videoHeight;
-    const cropWidth = Math.min(video.videoWidth, video.videoHeight * targetAspect);
-    const cropHeight = Math.min(video.videoHeight, video.videoWidth / targetAspect);
-    const cropX = (video.videoWidth - cropWidth) / 2;
-    const cropY = (video.videoHeight - cropHeight) / 2;
     if (facingMode === 'user') {
+        hiddenCtx.translate(cols, 0);
         hiddenCtx.scale(-1, 1);
-        hiddenCtx.drawImage(video, cropX, cropY, cropWidth, cropHeight, -cols, 0, cols, rows);
-    } else {
-        hiddenCtx.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, cols, rows);
     }
+    const placement = getFramePlacement();
+    hiddenCtx.drawImage(video,
+        placement.x * cols, placement.y * rows,
+        placement.width * cols, placement.height * rows);
     hiddenCtx.restore();
 }
 
@@ -302,16 +342,12 @@ function runFaceDetection(timestamp) {
         const results = faceLandmarker.detectForVideo(video, timestamp);
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
             const lm = results.faceLandmarks[0];
-            const targetAspect = captureAspect || video.videoWidth / video.videoHeight;
-            const cropWidth = Math.min(video.videoWidth, video.videoHeight * targetAspect);
-            const cropHeight = Math.min(video.videoHeight, video.videoWidth / targetAspect);
-            const cropX = (video.videoWidth - cropWidth) / 2;
-            const cropY = (video.videoHeight - cropHeight) / 2;
+            const placement = getFramePlacement();
             const getX = p => {
-                const x = (p.x * video.videoWidth - cropX) / cropWidth;
+                const x = placement.x + p.x * placement.width;
                 return facingMode === 'user' ? 1 - x : x;
             };
-            const getY = p => (p.y * video.videoHeight - cropY) / cropHeight;
+            const getY = p => placement.y + p.y * placement.height;
 
             const mouthX = (getX(lm[13]) + getX(lm[14])) / 2;
             const mouthY = (getY(lm[13]) + getY(lm[14])) / 2;
@@ -661,6 +697,7 @@ function canvasToBlob(canvas, type = 'image/png', quality) {
 
 async function takeSnapshot() {
     if (!cameraReady || !hasRenderedFrame) return;
+    closeEffectsMenu();
     flashPreview();
 
     const source = currentMode === 'ascii' ? asciiCanvas : pixelCanvas;
@@ -678,6 +715,9 @@ async function takeSnapshot() {
     if (oldUrl) URL.revokeObjectURL(oldUrl);
     photoResult.dataset.objectUrl = dataUrl;
     photoResult.src = dataUrl;
+    document.getElementById('lastPhotoThumb').src = dataUrl;
+    document.getElementById('lastPhotoThumb').hidden = false;
+    document.getElementById('lastPhotoBtn').disabled = false;
     openPreviewDialog('photoModal');
 }
 
@@ -722,6 +762,7 @@ async function toggleRecording() {
 
 async function startRecording() {
     if (!cameraReady || !hasRenderedFrame || recordingBusy) return;
+    closeEffectsMenu();
     if (!lastRenderedCanvas.captureStream || typeof MediaRecorder === 'undefined') {
         captureHint.textContent = '這個瀏覽器不支援錄影，仍可儲存照片。';
         return;
@@ -742,9 +783,9 @@ async function startRecording() {
         recordingBusy = true;
         updateCaptureControls();
         recordBtn.setAttribute('aria-pressed', 'true');
-        captureHint.textContent = '錄影中 · 15 秒後自動停止 · 停止後可切換鏡頭與畫面';
+        captureHint.textContent = '錄影中 · 15 秒後自動停止';
         recordBtn.classList.add('recording');
-        recordBtn.textContent = '■ 停止';
+        recordBtn.setAttribute('aria-label', '停止錄影');
         recordIndicator.classList.add('show');
 
         recordingStopTimer = window.setTimeout(() => {
@@ -766,7 +807,7 @@ function stopRecording() {
     if (mediaRecorder?.state === 'recording') mediaRecorder.stop();
     recordBtn.setAttribute('aria-pressed', 'false');
     recordBtn.classList.remove('recording');
-    recordBtn.textContent = '● 錄影';
+    recordBtn.setAttribute('aria-label', '開始錄影');
     recordIndicator.classList.remove('show');
 }
 
@@ -826,6 +867,10 @@ function handleVisibilityChange() {
     }
 }
 
+window.setCaptureKind = setCaptureKind;
+window.showLastPhoto = showLastPhoto;
+window.closeEffectsMenu = closeEffectsMenu;
+window.updateEffectsSummary = updateEffectsSummary;
 window.initCamera = initCamera;
 window.setMode = setMode;
 window.setColorTheme = setColorTheme;
@@ -838,6 +883,17 @@ window.shareCurrentVideo = shareCurrentVideo;
 window.closeVideoModal = closeVideoModal;
 
 document.addEventListener('visibilitychange', handleVisibilityChange);
+document.addEventListener('pointerdown', event => {
+    const menu = document.getElementById('effectsMenu');
+    if (menu.open && !menu.contains(event.target)) closeEffectsMenu();
+});
+document.addEventListener('keydown', event => {
+    const menu = document.getElementById('effectsMenu');
+    if (event.key === 'Escape' && menu.open) {
+        closeEffectsMenu();
+        menu.querySelector('summary').focus();
+    }
+});
 window.addEventListener('pagehide', () => {
     stopAnimationLoop();
     if (mediaRecorder?.state === 'recording') stopRecording();

@@ -111,6 +111,7 @@ function toggleBlackMist() {
     blackMistButton.classList.toggle('active', blackMistEnabled);
     blackMistButton.textContent = blackMistEnabled ? '黑柔焦 ON' : '黑柔焦 OFF';
     blackMistButton.setAttribute('aria-pressed', String(blackMistEnabled));
+    window.updateEffectsSummary?.();
 }
 
 window.toggleBlackMist = toggleBlackMist;

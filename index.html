@@ -9,12 +9,13 @@
 </head>
 <body>
     <div class="container">
-        <header class="app-header"><div><p class="eyebrow">DIGITAL PLAYGROUND / 2000</p><h1 id="mainTitle">Y2K CAM</h1></div><span class="edition">RETRO CAMERA</span></header>
+        <header class="app-header"><h1 id="mainTitle">Y2K CAM</h1><span class="edition">RETRO CAMERA</span></header>
 
         <video id="webcam" autoplay playsinline muted></video>
         <canvas id="hiddenCanvas"></canvas>
         <canvas id="warpCanvas"></canvas>
 
+        <div class="preview-area">
         <div class="preview-box" id="previewBox">
             <canvas id="asciiCanvas" aria-label="ASCII camera preview"></canvas>
             <canvas id="pixelCanvas" aria-label="Pixel camera preview"></canvas>
@@ -22,25 +23,54 @@
             <div class="camera-status" id="cameraStatus"><p id="cameraMessage" role="status" aria-live="polite">正在啟動相機…</p><button class="btn" id="retryCameraBtn" type="button" onclick="initCamera()" hidden>重新啟動相機</button></div>
             <div class="record-indicator" id="recordIndicator" aria-hidden="true">● REC</div>
         </div>
+        </div>
 
-        <div class="controls"><fieldset class="control-group"><legend>01 / 畫面</legend><div class="control-row">
-            <button class="btn active" id="btnAscii" type="button" onclick="setMode('ascii')">ASCII 文字</button>
-            <button class="btn" id="btnPixel" type="button" onclick="setMode('pixel')">8-bit 像素</button>
-
-            </div></fieldset><fieldset class="control-group"><legend>02 / 色調與質感</legend><div class="control-row">
-
-            <button class="btn active" id="btnGreen" type="button" onclick="setColorTheme('green')">經典綠</button>
-            <button class="btn" id="btnMono" type="button" onclick="setColorTheme('mono')">黑白灰階</button>
-            <button class="btn" id="btnColor" type="button" onclick="setColorTheme('color')">真實彩色</button>
-            <button class="btn" id="btnCcd" type="button" onclick="setColorTheme('ccd')">Y2K CCD</button>
-            <button class="btn" id="btnBlackMist" type="button" onclick="toggleBlackMist()">黑柔焦 OFF</button>
-
-            </div></fieldset><fieldset class="control-group capture-group"><legend>03 / 拍攝</legend><div class="control-row">
-
-            <button class="btn" id="switchCameraBtn" type="button" onclick="switchCamera()">切換鏡頭</button>
-            <button class="btn btn-accent" id="snapshotBtn" type="button" onclick="takeSnapshot()">📷 儲存照片</button>
-            <button class="btn btn-record" id="recordBtn" type="button" onclick="toggleRecording()">● 錄影</button>
-            </div></fieldset><p class="capture-hint" id="captureHint" role="status" aria-live="polite">影片最長 15 秒 · 不含聲音 · 影像於裝置上處理</p>
+        <div class="controls">
+            <details class="effects-menu" id="effectsMenu">
+                <summary>
+                    <span>效果</span>
+                    <span class="effects-summary" id="effectsSummary">ASCII · 經典綠</span>
+                    <span class="effects-chevron" aria-hidden="true">⌄</span>
+                </summary>
+                <div class="effects-panel">
+                    <div class="effects-heading"><span>調整效果</span><button class="btn" type="button" onclick="closeEffectsMenu()">完成</button></div>
+                    <fieldset class="control-group">
+                        <legend>畫面</legend>
+                        <div class="control-row">
+                            <button class="btn active" id="btnAscii" type="button" onclick="setMode('ascii')">ASCII 文字</button>
+                            <button class="btn" id="btnPixel" type="button" onclick="setMode('pixel')">8-bit 像素</button>
+                        </div>
+                    </fieldset>
+                    <fieldset class="control-group">
+                        <legend>色調與質感</legend>
+                        <div class="control-row">
+                            <button class="btn active" id="btnGreen" type="button" onclick="setColorTheme('green')">經典綠</button>
+                            <button class="btn" id="btnMono" type="button" onclick="setColorTheme('mono')">黑白灰階</button>
+                            <button class="btn" id="btnColor" type="button" onclick="setColorTheme('color')">真實彩色</button>
+                            <button class="btn" id="btnCcd" type="button" onclick="setColorTheme('ccd')">Y2K CCD</button>
+                            <button class="btn" id="btnBlackMist" type="button" onclick="toggleBlackMist()">黑柔焦 OFF</button>
+                        </div>
+                    </fieldset>
+                </div>
+            </details>
+            <div class="capture-modes" role="group" aria-label="拍攝模式">
+                <button class="capture-mode active" id="capturePhotoBtn" type="button" aria-pressed="true" onclick="setCaptureKind('photo')">照片</button>
+                <button class="capture-mode" id="captureVideoBtn" type="button" aria-pressed="false" onclick="setCaptureKind('video')">影片</button>
+            </div>
+            <div class="capture-bar">
+                <button class="gallery-button" id="lastPhotoBtn" type="button" aria-label="查看上一張照片" onclick="showLastPhoto()" disabled>
+                    <img id="lastPhotoThumb" alt="" hidden>
+                    <svg class="gallery-placeholder" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></svg>
+                </button>
+                <div class="shutter-slot">
+                    <button class="shutter shutter-photo" id="snapshotBtn" type="button" onclick="takeSnapshot()" aria-label="拍照並預覽照片"><span class="shutter-core" aria-hidden="true"></span></button>
+                    <button class="shutter shutter-video" id="recordBtn" type="button" onclick="toggleRecording()" aria-label="開始錄影" aria-pressed="false" hidden><span class="shutter-core" aria-hidden="true"></span></button>
+                </div>
+                <button class="camera-icon-button" id="switchCameraBtn" type="button" onclick="switchCamera()" aria-label="切換前後鏡頭">
+                    <svg viewBox="0 0 24 24" width="25" height="25" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v12H4z"/><path d="M8 13a4 4 0 0 1 7-2m1 5a4 4 0 0 1-7 2M15 8v3h-3m-3 9v-3h3"/></svg>
+                </button>
+            </div>
+            <p class="capture-hint" id="captureHint" role="status" aria-live="polite">影片最長 15 秒 · 不含聲音</p>
         </div>
     </div>
 
