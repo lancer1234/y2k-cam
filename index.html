@@ -2,14 +2,14 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="theme-color" content="#0d0d0d">
     <title>Y2K CAM</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <h1 id="mainTitle">Y2K CAM</h1>
+        <header class="app-header"><div><p class="eyebrow">DIGITAL PLAYGROUND / 2000</p><h1 id="mainTitle">Y2K CAM</h1></div><span class="edition">RETRO CAMERA</span></header>
 
         <video id="webcam" autoplay playsinline muted></video>
         <canvas id="hiddenCanvas"></canvas>
@@ -19,14 +19,15 @@
             <canvas id="asciiCanvas" aria-label="ASCII camera preview"></canvas>
             <canvas id="pixelCanvas" aria-label="Pixel camera preview"></canvas>
             <div class="timestamp-stamp" id="asciiStamp"></div>
+            <div class="camera-status" id="cameraStatus"><p id="cameraMessage" role="status" aria-live="polite">正在啟動相機…</p><button class="btn" id="retryCameraBtn" type="button" onclick="initCamera()" hidden>重新啟動相機</button></div>
             <div class="record-indicator" id="recordIndicator" aria-hidden="true">● REC</div>
         </div>
 
-        <div class="controls">
+        <div class="controls"><fieldset class="control-group"><legend>01 / 畫面</legend><div class="control-row">
             <button class="btn active" id="btnAscii" type="button" onclick="setMode('ascii')">ASCII 文字</button>
             <button class="btn" id="btnPixel" type="button" onclick="setMode('pixel')">8-bit 像素</button>
 
-            <div class="divider"></div>
+            </div></fieldset><fieldset class="control-group"><legend>02 / 色調與質感</legend><div class="control-row">
 
             <button class="btn active" id="btnGreen" type="button" onclick="setColorTheme('green')">經典綠</button>
             <button class="btn" id="btnMono" type="button" onclick="setColorTheme('mono')">黑白灰階</button>
@@ -34,32 +35,33 @@
             <button class="btn" id="btnCcd" type="button" onclick="setColorTheme('ccd')">Y2K CCD</button>
             <button class="btn" id="btnBlackMist" type="button" onclick="toggleBlackMist()">黑柔焦 OFF</button>
 
-            <div class="divider"></div>
+            </div></fieldset><fieldset class="control-group capture-group"><legend>03 / 拍攝</legend><div class="control-row">
 
-            <button class="btn" type="button" onclick="switchCamera()">切換鏡頭</button>
-            <button class="btn btn-accent" type="button" onclick="takeSnapshot()">📷 儲存照片</button>
+            <button class="btn" id="switchCameraBtn" type="button" onclick="switchCamera()">切換鏡頭</button>
+            <button class="btn btn-accent" id="snapshotBtn" type="button" onclick="takeSnapshot()">📷 儲存照片</button>
             <button class="btn btn-record" id="recordBtn" type="button" onclick="toggleRecording()">● 錄影</button>
+            </div></fieldset><p class="capture-hint" id="captureHint" role="status" aria-live="polite">影片最長 15 秒 · 不含聲音 · 影像於裝置上處理</p>
         </div>
     </div>
 
-    <div class="modal" id="photoModal" role="dialog" aria-modal="true" aria-label="照片預覽">
-        <img id="photoResult" alt="Snapshot">
+    <dialog class="modal" id="photoModal" role="dialog" aria-modal="true" aria-label="照片預覽">
+        <img id="photoResult" alt="拍攝的 Y2K 風格照片">
         <div class="modal-tip" id="photoTip">長按上方圖片即可「儲存至相簿」，也可以直接分享</div>
         <div class="modal-actions">
             <button class="modal-action" id="sharePhotoBtn" type="button" onclick="shareCurrentPhoto()">分享</button>
             <button class="modal-close" type="button" onclick="closeModal()">關閉</button>
         </div>
-    </div>
+    </dialog>
 
-    <div class="modal" id="videoModal" role="dialog" aria-modal="true" aria-label="錄影預覽">
+    <dialog class="modal" id="videoModal" role="dialog" aria-modal="true" aria-label="錄影預覽">
         <video id="videoResult" controls playsinline></video>
-        <div class="modal-tip">錄影完成後會自動轉成 MP4</div>
+        <div class="modal-tip">錄影完成後會嘗試轉成 MP4；失敗仍可儲存原始影片</div>
         <div class="modal-actions">
             <button class="modal-action" id="shareVideoBtn" type="button" onclick="shareCurrentVideo()">分享</button>
             <a class="modal-action download-link" id="downloadVideoBtn" download="y2k-cam.mp4">儲存影片</a>
             <button class="modal-close" type="button" onclick="closeVideoModal()">關閉</button>
         </div>
-    </div>
+    </dialog>
 
     <script type="module" src="app.js"></script>
     <script type="module" src="black-mist.js"></script>
